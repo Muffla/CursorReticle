@@ -25,7 +25,8 @@ cooldown, drawn around the cursor so you never lose it in a fight.
 - **Cooldown sweep** that fills as a chosen spell recharges. The main circle or the health
   circle can sit inside or outside it.
 - **Low health warning** that recolors the circles, the dot or crosshair, or makes them pulse.
-- **Text at the cursor**: health %, shield and seconds left on the tracked spell.
+- **Text at the cursor**: health %, shield and seconds left on the tracked spell, in your
+  choice of font.
 - **Previews** for the health circle, cooldown sweep and low health warning, so you can
   set them up outside a run.
 

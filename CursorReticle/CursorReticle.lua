@@ -14,12 +14,24 @@ local EDGE_WIDTHS = { 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10
 local DOT_RADIUS = 14.5 / 32;
 
 local TAB_NAMES = { "Circle", "Health circle", "Center", "Low health", "Cooldown sweep", "Text" };
-local TAB_SIZES = { { 540, 492 }, { 590, 420 }, { 540, 500 }, { 540, 310 }, { 590, 500 }, { 540, 410 } };
+local TAB_SIZES = { { 540, 492 }, { 590, 420 }, { 540, 500 }, { 540, 310 }, { 590, 500 }, { 540, 440 } };
 
 -- Where the text goes around the rings: the text's anchor point, and the direction away from
 -- the cursor.
 local TEXT_POSITIONS = { "below", "above", "right", "left" };
 local TEXT_POSITION_NAMES = { below = "Below the circle", above = "Above the circle", right = "Right of the circle", left = "Left of the circle" };
+-- The text's font: the four fonts every 1.12 client has, and Barlow Semi Condensed, which
+-- comes with the addon (SIL Open Font License, in the Fonts folder).
+local TEXT_FONTS = { "friz", "barlow", "arial", "skurri", "morpheus" };
+local TEXT_FONT_NAMES = {
+	friz = "Friz Quadrata", barlow = "Barlow Semi Condensed", arial = "Arial Narrow",
+	skurri = "Skurri", morpheus = "Morpheus",
+};
+local TEXT_FONT_FILES = {
+	friz = "Fonts\\FRIZQT__.TTF", arial = "Fonts\\ARIALN.TTF",
+	skurri = "Fonts\\skurri.ttf", morpheus = "Fonts\\MORPHEUS.TTF",
+	barlow = "Interface\\AddOns\\CursorReticle\\Fonts\\BarlowSemiCondensed-SemiBold.ttf",
+};
 local TEXT_ANCHORS = {
 	below = { "TOP", 0, -1 }, above = { "BOTTOM", 0, 1 },
 	right = { "LEFT", 1, 0 }, left = { "RIGHT", -1, 0 },
@@ -135,6 +147,7 @@ local DEFAULTS = {
 	textCooldown = false,      -- seconds left on the sweep's spell
 	textPos = "below",
 	textSize = 12,
+	textFont = "friz",
 	textByHealth = true,       -- health % colored by health
 	tr = 1, tg = 1, tb = 1,
 };
@@ -847,7 +860,7 @@ local function OuterRadius()
 end
 
 local function LayoutText()
-	readout:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", db.textSize, "OUTLINE");
+	readout:SetFont(TEXT_FONT_FILES[db.textFont], db.textSize, "OUTLINE");
 	readout:SetTextColor(db.tr, db.tg, db.tb);
 	local anchor = TEXT_ANCHORS[db.textPos];
 	local d = OuterRadius() + TEXT_GAP;
@@ -1042,6 +1055,9 @@ local function FillDefaults(reset)
 	if ( not RING_TYPE_NAMES[db.sweepRingType] ) then
 		db.sweepRingType = DEFAULTS.sweepRingType;
 	end
+	if ( not TEXT_FONT_NAMES[db.textFont] ) then
+		db.textFont = DEFAULTS.textFont;
+	end
 	if ( not TEXT_POSITION_NAMES[db.textPos] ) then
 		db.textPos = DEFAULTS.textPos;
 	end
@@ -1087,7 +1103,8 @@ local TAB_SETTINGS = {
 	{ "sweepEnabled", "track", "sweepRingPos", "sweepRingType", "sweepSync", "sweepRingSize",
 	  "sweepRingThickness", "sweepAlpha", "smr", "smg", "smb", "sweepFillAlpha", "sr", "sg", "sb",
 	  "sweepOutline", "sweepOutlineWidth", "sor", "sog", "sob" },
-	{ "textHealth", "textShield", "textCooldown", "textPos", "textSize", "textByHealth", "tr", "tg", "tb" },
+	{ "textHealth", "textShield", "textCooldown", "textPos", "textFont", "textSize", "textByHealth",
+	  "tr", "tg", "tb" },
 };
 
 -- Resets the settings of tab <id> (the spells seen so far are kept).
@@ -1166,20 +1183,24 @@ end
 -- Options window
 ---------------------------------------------------------------------------
 
-local function ShowTooltip(owner, text)
+-- The options window's helpers, in one table: a Lua 5.0 function can use at most 32
+-- locals from around it, and a file at most 200 locals of its own.
+local UI = {};
+
+function UI.ShowTooltip(owner, text)
 	GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
 	GameTooltip:SetText(text, 1, 1, 1, 1, 1);
 	GameTooltip:Show();
 end
 
-local function AddTooltip(frame, text)
-	frame:SetScript("OnEnter", function() ShowTooltip(this, text); end);
+function UI.AddTooltip(frame, text)
+	frame:SetScript("OnEnter", function() UI.ShowTooltip(this, text); end);
 	frame:SetScript("OnLeave", function() GameTooltip:Hide(); end);
 end
 
 -- Dims a control when it doesn't apply, and stops it taking clicks when it can't be used.
 -- A control is a frame; its clickable parts are listed in .buttons (or it is one itself).
-local function SetControlState(c, active, clickable)
+function UI.SetControlState(c, active, clickable)
 	c:SetAlpha(active and 1 or GREYED);
 	local buttons = c.buttons or { c };
 	for i = 1, table.getn(buttons) do
@@ -1195,7 +1216,7 @@ local function SetControlState(c, active, clickable)
 end
 
 -- A frame holding a row of widgets, so they can be greyed out together.
-local function CreateRow(parent, x, y, width, height)
+function UI.CreateRow(parent, x, y, width, height)
 	local row = CreateFrame("Frame", nil, parent);
 	row:SetWidth(width);
 	row:SetHeight(height);
@@ -1204,7 +1225,7 @@ local function CreateRow(parent, x, y, width, height)
 	return row;
 end
 
-local function CreateSwatch(parent, size)
+function UI.CreateSwatch(parent, size)
 	local b = CreateFrame("Button", nil, parent);
 	b:SetWidth(size);
 	b:SetHeight(size);
@@ -1221,7 +1242,7 @@ local function CreateSwatch(parent, size)
 	return b;
 end
 
-local function CreateLabel(parent, text, x, y)
+function UI.CreateLabel(parent, text, x, y)
 	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight");
 	label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y);
 	label:SetText(text);
@@ -1229,13 +1250,13 @@ local function CreateLabel(parent, text, x, y)
 end
 
 -- A label and a swatch that opens the color picker for <prefix>r/g/b.
-local function CreateColorRow(parent, text, x, y, prefix)
-	local row = CreateRow(parent, x, y, 110, 20);
-	local label = CreateLabel(row, text, 0, -3);
-	local swatch = CreateSwatch(row, 20);
+function UI.CreateColorRow(parent, text, x, y, prefix)
+	local row = UI.CreateRow(parent, x, y, 110, 20);
+	local label = UI.CreateLabel(row, text, 0, -3);
+	local swatch = UI.CreateSwatch(row, 20);
 	swatch:SetPoint("LEFT", label, "RIGHT", 8, 0);
 	swatch:SetScript("OnClick", function() OpenColorPicker(prefix); end);
-	AddTooltip(swatch, "Click to choose a color.");
+	UI.AddTooltip(swatch, "Click to choose a color.");
 	row.swatch = swatch;
 	row.prefix = prefix;
 	table.insert(row.buttons, swatch);
@@ -1243,11 +1264,11 @@ local function CreateColorRow(parent, text, x, y, prefix)
 end
 
 -- A row of one-click color presets for <prefix>r/g/b.
-local function CreatePresetRow(parent, x, y, prefix)
-	local row = CreateRow(parent, x, y, 220, 18);
+function UI.CreatePresetRow(parent, x, y, prefix)
+	local row = UI.CreateRow(parent, x, y, 220, 18);
 	for i = 1, table.getn(PRESETS) do
 		local c = PRESETS[i];
-		local s = CreateSwatch(row, 18);
+		local s = UI.CreateSwatch(row, 18);
 		s:SetPoint("TOPLEFT", row, "TOPLEFT", (i - 1) * 24, 0);
 		s.fill:SetVertexColor(c[1], c[2], c[3]);
 		s:SetScript("OnClick", function() SetColor(prefix, c[1], c[2], c[3]); end);
@@ -1257,13 +1278,13 @@ local function CreatePresetRow(parent, x, y, prefix)
 end
 
 -- A small button at the right end of a section title that turns a preview on and off.
-local function CreatePreviewButton(parent, x, y, tooltip, onClick)
+function UI.CreatePreviewButton(parent, x, y, tooltip, onClick)
 	local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate");
 	b:SetWidth(110);
 	b:SetHeight(18);
 	b:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 130, y + 2);
 	b:SetScript("OnClick", onClick);
-	AddTooltip(b, tooltip);
+	UI.AddTooltip(b, tooltip);
 	b.SetRunning = function(running)
 		b:SetText(running and "Stop preview" or "Preview");
 	end;
@@ -1271,7 +1292,7 @@ local function CreatePreviewButton(parent, x, y, tooltip, onClick)
 end
 
 -- A gold section title with a faint line under it.
-local function CreateHeader(parent, text, x, y)
+function UI.CreateHeader(parent, text, x, y)
 	local h = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal");
 	h:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y);
 	h:SetText(text);
@@ -1283,7 +1304,7 @@ local function CreateHeader(parent, text, x, y)
 end
 
 -- Small grey text, for notes under an option.
-local function CreateNote(parent, x, y)
+function UI.CreateNote(parent, x, y)
 	local note = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall");
 	note:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y);
 	note:SetWidth(240);
@@ -1291,7 +1312,7 @@ local function CreateNote(parent, x, y)
 	return note;
 end
 
-local function CreateCheck(parent, name, text, x, y, tooltip, onClick)
+function UI.CreateCheck(parent, name, text, x, y, tooltip, onClick)
 	local c = CreateFrame("CheckButton", name, parent, "OptionsCheckButtonTemplate");
 	c:SetWidth(26);
 	c:SetHeight(26);
@@ -1305,12 +1326,12 @@ local function CreateCheck(parent, name, text, x, y, tooltip, onClick)
 		onClick(this:GetChecked() and true or false);
 	end);
 	if ( tooltip ) then
-		AddTooltip(c, tooltip);
+		UI.AddTooltip(c, tooltip);
 	end
 	return c;
 end
 
-local function CreateSlider(parent, name, x, y, minValue, maxValue, lowText, highText, label, onChange)
+function UI.CreateSlider(parent, name, x, y, minValue, maxValue, lowText, highText, label, onChange)
 	local s = CreateFrame("Slider", name, parent, "OptionsSliderTemplate");
 	s:SetWidth(220);
 	s:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y);
@@ -1331,49 +1352,154 @@ end
 
 -- An outline section: a checkbox with its color beside it and its width below, for the
 -- settings <key>, <key>Width and the color <prefix>r/g/b. Returns the three controls.
-local function CreateOutlineOptions(parent, name, x, y, key, prefix, tooltip)
-	CreateHeader(parent, "Outline", x, y);
-	local check = CreateCheck(parent, name, "Outline", x, y - 18, tooltip,
+function UI.CreateOutlineOptions(parent, name, x, y, key, prefix, tooltip)
+	UI.CreateHeader(parent, "Outline", x, y);
+	local check = UI.CreateCheck(parent, name, "Outline", x, y - 18, tooltip,
 		function(v) db[key] = v; ApplySettings(); end);
-	local color = CreateColorRow(parent, "Color:", x + 130, y - 21, prefix);
-	local width = CreateSlider(parent, name .. "Width", x + 6, y - 66, 1, 3, "1", "3",
+	local color = UI.CreateColorRow(parent, "Color:", x + 130, y - 21, prefix);
+	local width = UI.CreateSlider(parent, name .. "Width", x + 6, y - 66, 1, 3, "1", "3",
 		function(v) return "Width: " .. v; end,
 		function(v) db[key .. "Width"] = v; ApplySettings(); end);
 	return check, color, width;
 end
 
 -- A label and a standard drop-down menu; init fills the menu each time it opens.
-local function CreateDropDown(parent, name, x, y, labelText, init)
-	local row = CreateRow(parent, x, y, 240, 24);
-	CreateLabel(row, labelText, 0, 0);
+-- The drop-down menus open a list of their own instead of the game's shared one: the game
+-- closes the shared one whenever the target changes, which in a fight is all the time.
+
+-- Whether the cursor is over <frame>.
+function UI.MouseOver(frame)
+	local x, y = GetCursorPosition();
+	local scale = frame:GetEffectiveScale();
+	x, y = x / scale, y / scale;
+	local left, right, bottom, top = frame:GetLeft(), frame:GetRight(), frame:GetBottom(), frame:GetTop();
+	return left and x >= left and x <= right and y >= bottom and y <= top;
+end
+
+-- The one menu list, made on first use. It closes when an item is picked, when its button
+-- is clicked again, with the options window, or when the mouse has been away for 2 seconds.
+function UI.Menu()
+	if ( UI.menu ) then return UI.menu; end
+	local m = CreateFrame("Frame", nil, UIParent);
+	m:SetFrameStrata("FULLSCREEN_DIALOG");
+	m:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		tile = true, tileSize = 16, edgeSize = 16,
+		insets = { left = 4, right = 4, top = 4, bottom = 4 },
+	});
+	m:SetBackdropColor(0, 0, 0, 0.9);
+	m:EnableMouse(true);
+	m:Hide();
+	m.rows = {};
+	m.away = 0;
+	m:SetScript("OnUpdate", function()
+		if ( UI.MouseOver(this) or UI.MouseOver(this.anchor) ) then
+			this.away = 0;
+		else
+			this.away = this.away + arg1;
+			if ( this.away > 2 ) then this:Hide(); end
+		end
+	end);
+	UI.menu = m;
+	return m;
+end
+
+function UI.CloseMenu()
+	if ( UI.menu ) then UI.menu:Hide(); end
+end
+
+-- A row of the menu list: a check mark, the text, and a highlight under the mouse.
+function UI.MenuRow(m, i)
+	if ( m.rows[i] ) then return m.rows[i]; end
+	local b = CreateFrame("Button", nil, m);
+	b:SetHeight(16);
+	b:SetPoint("TOPLEFT", m, "TOPLEFT", 8, -8 - (i - 1) * 16);
+	b.check = b:CreateTexture(nil, "ARTWORK");
+	b.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check");
+	b.check:SetWidth(16);
+	b.check:SetHeight(16);
+	b.check:SetPoint("LEFT", b, "LEFT", 0, 0);
+	b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall");
+	b.text:SetPoint("LEFT", b, "LEFT", 18, 0);
+	b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight");
+	b:GetHighlightTexture():SetBlendMode("ADD");
+	b:SetScript("OnClick", function()
+		UI.CloseMenu();
+		this.item.onClick(this.item.value);
+	end);
+	m.rows[i] = b;
+	return b;
+end
+
+-- Opens the menu under drop-down <dd> with the items <init> adds, or closes it if it is
+-- already open there.
+function UI.ToggleMenu(dd, init)
+	local m = UI.Menu();
+	if ( m:IsShown() and m.anchor == dd ) then
+		m:Hide();
+		return;
+	end
+	UI.items = {};
+	init();
+	local width = 0;
+	for i = 1, table.getn(UI.items) do
+		local item, b = UI.items[i], UI.MenuRow(m, i);
+		b.item = item;
+		b.text:SetText(item.text);
+		if ( item.title ) then
+			b.text:SetTextColor(1, 0.82, 0);
+			b:Disable();
+		else
+			b.text:SetTextColor(1, 1, 1);
+			b:Enable();
+		end
+		if ( item.checked ) then b.check:Show(); else b.check:Hide(); end
+		b:Show();
+		width = math.max(width, b.text:GetStringWidth() + 22);
+	end
+	for i = table.getn(UI.items) + 1, table.getn(m.rows) do
+		m.rows[i]:Hide();
+	end
+	for i = 1, table.getn(UI.items) do
+		m.rows[i]:SetWidth(width);
+	end
+	m:SetWidth(width + 16);
+	m:SetHeight(table.getn(UI.items) * 16 + 16);
+	m.anchor = dd;
+	m.away = 0;
+	m:ClearAllPoints();
+	m:SetPoint("TOPLEFT", dd, "BOTTOMLEFT", 16, 6);
+	m:Show();
+end
+
+-- Adds an item to the menu being built: <onClick>(value) runs when it is picked.
+function UI.AddMenuItem(text, value, checked, onClick)
+	table.insert(UI.items, { text = text, value = value, checked = checked, onClick = onClick });
+end
+
+-- Adds a gold title line, which can't be picked.
+function UI.AddMenuTitle(text)
+	table.insert(UI.items, { text = text, title = true });
+end
+
+-- A label and a drop-down: the game's drop-down look, with the list above.
+function UI.CreateDropDown(parent, name, x, y, labelText, init)
+	local row = UI.CreateRow(parent, x, y, 240, 24);
+	UI.CreateLabel(row, labelText, 0, 0);
 	local dd = CreateFrame("Frame", name, row, "UIDropDownMenuTemplate");
 	dd:SetPoint("TOPLEFT", row, "TOPLEFT", 52, 9);
-	UIDropDownMenu_Initialize(dd, init);
 	-- 1.12 takes (width, frame); later clients take (frame, width).
 	if ( not pcall(UIDropDownMenu_SetWidth, 140, dd) ) then
 		pcall(UIDropDownMenu_SetWidth, dd, 140);
 	end
-	table.insert(row.buttons, getglobal(name .. "Button"));
+	local button = getglobal(name .. "Button");
+	button:SetScript("OnClick", function() UI.ToggleMenu(dd, init); end);
+	table.insert(row.buttons, button);
 	row.SetValueText = function(text)
 		getglobal(name .. "Text"):SetText(text);
 	end;
 	return row;
-end
-
-local function AddMenuItem(text, value, checked, onClick)
-	local info = {};
-	info.text = text;
-	info.value = value;
-	info.checked = checked;
-	info.func = function() onClick(this.value); end;
-	UIDropDownMenu_AddButton(info);
-end
-
-local function AddMenuTitle(text)
-	local info = {};
-	info.text = text;
-	info.isTitle = 1;
-	UIDropDownMenu_AddButton(info);
 end
 
 local function SelectSpell(key)
@@ -1386,32 +1512,32 @@ end
 local function InitSpellMenu()
 	local class, className = CurrentClass();
 	if ( not class ) then
-		AddMenuTitle("Start a run to choose a spell");
+		UI.AddMenuTitle("Start a run to choose a spell");
 		return;
 	end
 	RecordSpells();
 	local current = db.track[class];
 	local spells = SeenSpells(class);
 	if ( table.getn(spells) == 0 ) then
-		AddMenuTitle("No " .. (className or class) .. " spells seen yet");
+		UI.AddMenuTitle("No " .. (className or class) .. " spells seen yet");
 		return;
 	end
-	AddMenuTitle((className or class) .. " spells seen so far");
+	UI.AddMenuTitle((className or class) .. " spells seen so far");
 	for i = 1, table.getn(spells) do
 		local key, text = spells[i].key, spells[i].name;
 		if ( not FindSpell(key) ) then
 			text = text .. " |cff808080(not this run)|r";
 		end
-		AddMenuItem(text, key, key == current, SelectSpell);
+		UI.AddMenuItem(text, key, key == current, SelectSpell);
 	end
 end
 
 -- A menu choosing the setting <key> among <values>, shown by <names>.
-local function ChoiceMenu(key, values, names)
+function UI.ChoiceMenu(key, values, names)
 	return function()
 		for i = 1, table.getn(values) do
 			local v = values[i];
-			AddMenuItem(names[v], v, v == db[key], function(value)
+			UI.AddMenuItem(names[v], v, v == db[key], function(value)
 				db[key] = value;
 				ApplySettings();
 			end);
@@ -1438,13 +1564,13 @@ local function HealthThicknessKey()
 end
 
 -- For a control's onChange: saves the value under <key> and applies it.
-local function Setter(key)
+function UI.Setter(key)
 	return function(v) db[key] = v; ApplySettings(); end;
 end
 
-local function SizeLabel(v) return "Size: " .. v; end
-local function ThicknessLabel(v) return "Thickness: " .. THICKNESS_NAMES[v]; end
-local function OpacityLabel(v) return "Opacity: " .. v .. "%"; end
+function UI.SizeLabel(v) return "Size: " .. v; end
+function UI.ThicknessLabel(v) return "Thickness: " .. THICKNESS_NAMES[v]; end
+function UI.OpacityLabel(v) return "Opacity: " .. v .. "%"; end
 
 -- The tab pages: each builds its controls into <c>, the table Refresh updates them from.
 -- A column is 240 wide; each tab's left edge (and the second column's on the two-column
@@ -1454,21 +1580,21 @@ local RIGHT_COLUMN = 315;
 
 local function BuildRingTab(page, c)
 	local L = TAB_LEFT[1];
-	CreateHeader(page, "Main circle", L, -66);
-	c.showRing = CreateCheck(page, "CursorReticleOptionsShowRing", "Show circle", L, -84, nil, Setter("showRing"));
-	c.ringNote = CreateNote(page, L + 6, -110);
-	c.size = CreateSlider(page, "CursorReticleOptionsSize", L + 6, -150, 16, 200, "16", "200",
-		SizeLabel, Setter("size"));
-	c.thickness = CreateSlider(page, "CursorReticleOptionsThickness", L + 6, -192, 1, 5, "Thin", "Thick",
-		ThicknessLabel, Setter("thickness"));
-	c.alpha = CreateSlider(page, "CursorReticleOptionsAlpha", L + 6, -234, 10, 100, "10%", "100%",
-		OpacityLabel, Setter("alpha"));
+	UI.CreateHeader(page, "Main circle", L, -66);
+	c.showRing = UI.CreateCheck(page, "CursorReticleOptionsShowRing", "Show circle", L, -84, nil, UI.Setter("showRing"));
+	c.ringNote = UI.CreateNote(page, L + 6, -110);
+	c.size = UI.CreateSlider(page, "CursorReticleOptionsSize", L + 6, -150, 16, 200, "16", "200",
+		UI.SizeLabel, UI.Setter("size"));
+	c.thickness = UI.CreateSlider(page, "CursorReticleOptionsThickness", L + 6, -192, 1, 5, "Thin", "Thick",
+		UI.ThicknessLabel, UI.Setter("thickness"));
+	c.alpha = UI.CreateSlider(page, "CursorReticleOptionsAlpha", L + 6, -234, 10, 100, "10%", "100%",
+		UI.OpacityLabel, UI.Setter("alpha"));
 
-	CreateHeader(page, "Color", L, -268);
-	c.ringColor = CreateColorRow(page, "Color:", L + 6, -290, "");
-	c.ringPresets = CreatePresetRow(page, L + 6, -314, "");
+	UI.CreateHeader(page, "Color", L, -268);
+	c.ringColor = UI.CreateColorRow(page, "Color:", L + 6, -290, "");
+	c.ringPresets = UI.CreatePresetRow(page, L + 6, -314, "");
 
-	c.ringOutlineCheck, c.ringOutlineColor, c.ringOutlineWidth = CreateOutlineOptions(page,
+	c.ringOutlineCheck, c.ringOutlineColor, c.ringOutlineWidth = UI.CreateOutlineOptions(page,
 		"CursorReticleOptionsRingOutline", L, -346, "ringOutline", "ro",
 		"A dark edge around the circle, so it stays visible on bright ground.");
 
@@ -1479,46 +1605,46 @@ end
 local function BuildHealthTab(page, c)
 	local L, R = TAB_LEFT[2], RIGHT_COLUMN;
 	-- Left column: the health ring, its shape and its outline.
-	CreateHeader(page, "Health circle", L, -66);
-	c.healthPreview = CreatePreviewButton(page, L, -66,
+	UI.CreateHeader(page, "Health circle", L, -66);
+	c.healthPreview = UI.CreatePreviewButton(page, L, -66,
 		"Shows the health circle draining from full to empty on a loop, with your current "
 		.. "settings. With Shield on, shields go up and take the hits first, like in a run.",
 		TogglePreviewHealth);
-	c.healthEnable = CreateCheck(page, "CursorReticleOptionsHealthEnable", "Show health circle", L, -84,
+	c.healthEnable = UI.CreateCheck(page, "CursorReticleOptionsHealthEnable", "Show health circle", L, -84,
 		"A circle that fills as far round as your health goes, during a run. It takes the main "
 		.. "circle's place.",
-		Setter("healthEnabled"));
-	c.healthNote = CreateNote(page, L + 6, -110);
-	c.healthSync = CreateCheck(page, "CursorReticleOptionsHealthSync", "Same size and thickness as the main circle", L, -146,
+		UI.Setter("healthEnabled"));
+	c.healthNote = UI.CreateNote(page, L + 6, -110);
+	c.healthSync = UI.CreateCheck(page, "CursorReticleOptionsHealthSync", "Same size and thickness as the main circle", L, -146,
 		"Uses the main circle's size and thickness, so changing them here changes the main "
 		.. "circle's too.",
-		Setter("healthSync"));
-	c.healthSize = CreateSlider(page, "CursorReticleOptionsHealthSize", L + 6, -194, 16, 200, "16", "200",
-		SizeLabel, function(v) db[HealthSizeKey()] = v; ApplySettings(); end);
-	c.healthThickness = CreateSlider(page, "CursorReticleOptionsHealthThickness", L + 6, -236, 1, 5, "Thin", "Thick",
-		ThicknessLabel, function(v) db[HealthThicknessKey()] = v; ApplySettings(); end);
+		UI.Setter("healthSync"));
+	c.healthSize = UI.CreateSlider(page, "CursorReticleOptionsHealthSize", L + 6, -194, 16, 200, "16", "200",
+		UI.SizeLabel, function(v) db[HealthSizeKey()] = v; ApplySettings(); end);
+	c.healthThickness = UI.CreateSlider(page, "CursorReticleOptionsHealthThickness", L + 6, -236, 1, 5, "Thin", "Thick",
+		UI.ThicknessLabel, function(v) db[HealthThicknessKey()] = v; ApplySettings(); end);
 
-	c.healthOutlineCheck, c.healthOutlineColor, c.healthOutlineWidth = CreateOutlineOptions(page,
+	c.healthOutlineCheck, c.healthOutlineColor, c.healthOutlineWidth = UI.CreateOutlineOptions(page,
 		"CursorReticleOptionsHealthOutline", L, -270, "healthOutline", "ho",
 		"A dark edge around the health circle, so it stays visible on bright ground.");
 
 	-- Right column: its color.
-	CreateHeader(page, "Color", R, -66);
-	c.healthGradient = CreateCheck(page, "CursorReticleOptionsHealthGradient", "Color by health", R, -84,
+	UI.CreateHeader(page, "Color", R, -66);
+	c.healthGradient = UI.CreateCheck(page, "CursorReticleOptionsHealthGradient", "Color by health", R, -84,
 		"Colors the circle by health: green when full, then yellow, orange and red as it drops.",
-		Setter("healthGradient"));
-	c.healthColor = CreateColorRow(page, "Fill color:", R + 6, -114, "h");
-	c.healthPresets = CreatePresetRow(page, R + 6, -138, "h");
-	c.healthAlpha = CreateSlider(page, "CursorReticleOptionsHealthAlpha", R + 6, -182, 10, 100, "10%", "100%",
-		function(v) return "Fill opacity: " .. v .. "%"; end, Setter("healthAlpha"));
-	local missingNote = CreateNote(page, R + 6, -208);
+		UI.Setter("healthGradient"));
+	c.healthColor = UI.CreateColorRow(page, "Fill color:", R + 6, -114, "h");
+	c.healthPresets = UI.CreatePresetRow(page, R + 6, -138, "h");
+	c.healthAlpha = UI.CreateSlider(page, "CursorReticleOptionsHealthAlpha", R + 6, -182, 10, 100, "10%", "100%",
+		function(v) return "Fill opacity: " .. v .. "%"; end, UI.Setter("healthAlpha"));
+	local missingNote = UI.CreateNote(page, R + 6, -208);
 	missingNote:SetText("The missing health shows in the same color at "
 		.. (HEALTH_MISSING * 100) .. "% opacity.");
-	c.healthShield = CreateCheck(page, "CursorReticleOptionsHealthShield", "Shield", R, -246,
+	c.healthShield = UI.CreateCheck(page, "CursorReticleOptionsHealthShield", "Shield", R, -246,
 		"Shows your absorb shield over the end of your health, as much of it as the shield is "
 		.. "worth as a share of your max health; it shrinks back as the shield is used up.",
-		Setter("healthShield"));
-	c.healthShieldColor = CreateColorRow(page, "Color:", R + 130, -249, "hs");
+		UI.Setter("healthShield"));
+	c.healthShieldColor = UI.CreateColorRow(page, "Color:", R + 130, -249, "hs");
 
 	table.insert(c.colorRows, c.healthColor);
 	table.insert(c.colorRows, c.healthShieldColor);
@@ -1527,36 +1653,36 @@ end
 
 local function BuildCenterTab(page, c)
 	local L = TAB_LEFT[3];
-	CreateHeader(page, "Center", L, -66);
+	UI.CreateHeader(page, "Center", L, -66);
 	-- Dot and crosshair are one or the other: turning one on turns the other off.
-	c.centerDot = CreateCheck(page, "CursorReticleOptionsCenterDot", "Dot", L, -84, nil,
+	c.centerDot = UI.CreateCheck(page, "CursorReticleOptionsCenterDot", "Dot", L, -84, nil,
 		function(v)
 			db.centerDot = v;
 			if ( v ) then db.centerCross = false; end
 			ApplySettings();
 		end);
-	c.centerCross = CreateCheck(page, "CursorReticleOptionsCenterCross", "Crosshair", L + 90, -84, nil,
+	c.centerCross = UI.CreateCheck(page, "CursorReticleOptionsCenterCross", "Crosshair", L + 90, -84, nil,
 		function(v)
 			db.centerCross = v;
 			if ( v ) then db.centerDot = false; end
 			ApplySettings();
 		end);
-	c.centerSize = CreateSlider(page, "CursorReticleOptionsCenterSize", L + 6, -132, 2, 32, "2", "32",
-		SizeLabel, Setter("centerSize"));
-	c.centerThickness = CreateSlider(page, "CursorReticleOptionsCenterThickness", L + 6, -174, 1, 8, "1", "8",
-		function(v) return "Crosshair thickness: " .. v; end, Setter("centerThickness"));
-	c.centerAlpha = CreateSlider(page, "CursorReticleOptionsCenterAlpha", L + 6, -216, 10, 100, "10%", "100%",
-		OpacityLabel, Setter("centerAlpha"));
+	c.centerSize = UI.CreateSlider(page, "CursorReticleOptionsCenterSize", L + 6, -132, 2, 32, "2", "32",
+		UI.SizeLabel, UI.Setter("centerSize"));
+	c.centerThickness = UI.CreateSlider(page, "CursorReticleOptionsCenterThickness", L + 6, -174, 1, 8, "1", "8",
+		function(v) return "Crosshair thickness: " .. v; end, UI.Setter("centerThickness"));
+	c.centerAlpha = UI.CreateSlider(page, "CursorReticleOptionsCenterAlpha", L + 6, -216, 10, 100, "10%", "100%",
+		UI.OpacityLabel, UI.Setter("centerAlpha"));
 
-	CreateHeader(page, "Color", L, -250);
-	c.centerByHealth = CreateCheck(page, "CursorReticleOptionsCenterByHealth", "Color by health", L, -268,
+	UI.CreateHeader(page, "Color", L, -250);
+	c.centerByHealth = UI.CreateCheck(page, "CursorReticleOptionsCenterByHealth", "Color by health", L, -268,
 		"Colors the dot or crosshair by health, like the health circle: green when full, then "
 		.. "yellow, orange and red as it drops.",
-		Setter("centerByHealth"));
-	c.centerColor = CreateColorRow(page, "Color:", L + 6, -298, "c");
-	c.centerPresets = CreatePresetRow(page, L + 6, -322, "c");
+		UI.Setter("centerByHealth"));
+	c.centerColor = UI.CreateColorRow(page, "Color:", L + 6, -298, "c");
+	c.centerPresets = UI.CreatePresetRow(page, L + 6, -322, "c");
 
-	c.centerOutlineCheck, c.centerOutlineColor, c.centerOutlineWidth = CreateOutlineOptions(page,
+	c.centerOutlineCheck, c.centerOutlineColor, c.centerOutlineWidth = UI.CreateOutlineOptions(page,
 		"CursorReticleOptionsCenterOutline", L, -354, "centerOutline", "co",
 		"A dark edge around the dot or crosshair, so it stays visible on bright ground.");
 
@@ -1566,26 +1692,26 @@ end
 
 local function BuildLowHealthTab(page, c)
 	local L = TAB_LEFT[4];
-	CreateHeader(page, "Low health", L, -66);
-	c.lowPreview = CreatePreviewButton(page, L, -66,
+	UI.CreateHeader(page, "Low health", L, -66);
+	c.lowPreview = UI.CreatePreviewButton(page, L, -66,
 		"Shows the low health warning with your current settings, as if your health were low.",
 		TogglePreviewLow);
-	c.lowRed = CreateCheck(page, "CursorReticleOptionsLowRed", "Color the main circle", L, -84,
-		"Shows the main circle in the warning color. Needs the main circle to be shown.", Setter("lowRed"));
-	c.lowPulse = CreateCheck(page, "CursorReticleOptionsLowPulse", "Pulse the circles", L + 160, -84,
-		"Makes the circles pulse.", Setter("lowPulse"));
-	c.lowCenter = CreateCheck(page, "CursorReticleOptionsLowCenter", "Color the dot / crosshair", L, -108,
+	c.lowRed = UI.CreateCheck(page, "CursorReticleOptionsLowRed", "Color the main circle", L, -84,
+		"Shows the main circle in the warning color. Needs the main circle to be shown.", UI.Setter("lowRed"));
+	c.lowPulse = UI.CreateCheck(page, "CursorReticleOptionsLowPulse", "Pulse the circles", L + 160, -84,
+		"Makes the circles pulse.", UI.Setter("lowPulse"));
+	c.lowCenter = UI.CreateCheck(page, "CursorReticleOptionsLowCenter", "Color the dot / crosshair", L, -108,
 		"Shows the dot or crosshair in the warning color. Needs one of them to be on.",
-		Setter("lowCenter"));
-	c.lowSweepMain = CreateCheck(page, "CursorReticleOptionsLowSweepMain", "Color the sweep's main circle", L, -132,
+		UI.Setter("lowCenter"));
+	c.lowSweepMain = UI.CreateCheck(page, "CursorReticleOptionsLowSweepMain", "Color the sweep's main circle", L, -132,
 		"Shows the cooldown sweep's main color in the warning color. Needs the sweep to be on.",
-		Setter("lowSweepMain"));
-	c.lowSweepFill = CreateCheck(page, "CursorReticleOptionsLowSweepFill", "Color the sweep's fill", L, -156,
+		UI.Setter("lowSweepMain"));
+	c.lowSweepFill = UI.CreateCheck(page, "CursorReticleOptionsLowSweepFill", "Color the sweep's fill", L, -156,
 		"Shows the cooldown sweep's fill in the warning color. Needs the sweep to be on.",
-		Setter("lowSweepFill"));
-	c.lowColor = CreateColorRow(page, "Warning color:", L + 6, -186, "l");
-	c.lowAt = CreateSlider(page, "CursorReticleOptionsLowAt", L + 6, -226, 5, 75, "5%", "75%",
-		function(v) return "When below " .. v .. "% health"; end, Setter("lowAt"));
+		UI.Setter("lowSweepFill"));
+	c.lowColor = UI.CreateColorRow(page, "Warning color:", L + 6, -186, "l");
+	c.lowAt = UI.CreateSlider(page, "CursorReticleOptionsLowAt", L + 6, -226, 5, 75, "5%", "75%",
+		function(v) return "When below " .. v .. "% health"; end, UI.Setter("lowAt"));
 
 	table.insert(c.colorRows, c.lowColor);
 end
@@ -1593,49 +1719,49 @@ end
 local function BuildSweepTab(page, c)
 	local L, R = TAB_LEFT[5], RIGHT_COLUMN;
 	-- Left column: the spell, the sweep's shape, and the ring beside it.
-	CreateHeader(page, "Cooldown sweep", L, -66);
-	c.sweepPreview = CreatePreviewButton(page, L, -66,
+	UI.CreateHeader(page, "Cooldown sweep", L, -66);
+	c.sweepPreview = UI.CreatePreviewButton(page, L, -66,
 		"Shows the sweep with your current settings on a test cooldown of "
 		.. PREVIEW_COOLDOWN .. " seconds, even outside a run.",
 		TogglePreviewSweep);
-	c.sweepEnable = CreateCheck(page, "CursorReticleOptionsSweepEnable", "Enable", L, -84,
+	c.sweepEnable = UI.CreateCheck(page, "CursorReticleOptionsSweepEnable", "Enable", L, -84,
 		"Shows a spell's cooldown as a circle that fills up as the spell recharges. It takes the "
 		.. "place of the other circles; the main circle or the health circle can stay beside it.",
-		Setter("sweepEnabled"));
-	c.spellMenu = CreateDropDown(page, "CursorReticleOptionsSpell", L + 6, -118, "Spell:", InitSpellMenu);
-	c.spellHint = CreateNote(page, L + 6, -142);
+		UI.Setter("sweepEnabled"));
+	c.spellMenu = UI.CreateDropDown(page, "CursorReticleOptionsSpell", L + 6, -118, "Spell:", InitSpellMenu);
+	c.spellHint = UI.CreateNote(page, L + 6, -142);
 
-	CreateHeader(page, "Shape", L, -184);
-	c.sweepSync = CreateCheck(page, "CursorReticleOptionsSweepSync", "Same size and thickness as the main circle", L, -202,
+	UI.CreateHeader(page, "Shape", L, -184);
+	c.sweepSync = UI.CreateCheck(page, "CursorReticleOptionsSweepSync", "Same size and thickness as the main circle", L, -202,
 		"Uses the main circle's size and thickness, so changing them here changes the main "
 		.. "circle's too. Only while no circle is shown beside the sweep.",
-		Setter("sweepSync"));
-	c.sweepSize = CreateSlider(page, "CursorReticleOptionsSweepSize", L + 6, -250, 16, 200, "16", "200",
-		SizeLabel, function(v) db[SweepSizeKey()] = v; ApplySettings(); end);
-	c.sweepThickness = CreateSlider(page, "CursorReticleOptionsSweepThickness", L + 6, -292, 1, 5, "Thin", "Thick",
-		ThicknessLabel, function(v) db[SweepThicknessKey()] = v; ApplySettings(); end);
+		UI.Setter("sweepSync"));
+	c.sweepSize = UI.CreateSlider(page, "CursorReticleOptionsSweepSize", L + 6, -250, 16, 200, "16", "200",
+		UI.SizeLabel, function(v) db[SweepSizeKey()] = v; ApplySettings(); end);
+	c.sweepThickness = UI.CreateSlider(page, "CursorReticleOptionsSweepThickness", L + 6, -292, 1, 5, "Thin", "Thick",
+		UI.ThicknessLabel, function(v) db[SweepThicknessKey()] = v; ApplySettings(); end);
 
-	CreateHeader(page, "Circle beside it", L, -326);
-	c.ringPosMenu = CreateDropDown(page, "CursorReticleOptionsRingPos", L + 6, -350, "Where:",
-		ChoiceMenu("sweepRingPos", RING_POSITIONS, RING_POSITION_NAMES));
-	c.ringTypeMenu = CreateDropDown(page, "CursorReticleOptionsRingType", L + 6, -380, "Circle:",
-		ChoiceMenu("sweepRingType", RING_TYPES, RING_TYPE_NAMES));
-	c.ringPosNote = CreateNote(page, L + 6, -406);
+	UI.CreateHeader(page, "Circle beside it", L, -326);
+	c.ringPosMenu = UI.CreateDropDown(page, "CursorReticleOptionsRingPos", L + 6, -350, "Where:",
+		UI.ChoiceMenu("sweepRingPos", RING_POSITIONS, RING_POSITION_NAMES));
+	c.ringTypeMenu = UI.CreateDropDown(page, "CursorReticleOptionsRingType", L + 6, -380, "Circle:",
+		UI.ChoiceMenu("sweepRingType", RING_TYPES, RING_TYPE_NAMES));
+	c.ringPosNote = UI.CreateNote(page, L + 6, -406);
 
 	-- Right column: the main color, the fill color and the outline.
-	CreateHeader(page, "Main color", R, -66);
-	c.sweepMainColor = CreateColorRow(page, "Color:", R + 6, -88, "sm");
-	c.sweepMainPresets = CreatePresetRow(page, R + 6, -112, "sm");
-	c.sweepAlpha = CreateSlider(page, "CursorReticleOptionsSweepAlpha", R + 6, -156, 10, 100, "10%", "100%",
-		OpacityLabel, Setter("sweepAlpha"));
+	UI.CreateHeader(page, "Main color", R, -66);
+	c.sweepMainColor = UI.CreateColorRow(page, "Color:", R + 6, -88, "sm");
+	c.sweepMainPresets = UI.CreatePresetRow(page, R + 6, -112, "sm");
+	c.sweepAlpha = UI.CreateSlider(page, "CursorReticleOptionsSweepAlpha", R + 6, -156, 10, 100, "10%", "100%",
+		UI.OpacityLabel, UI.Setter("sweepAlpha"));
 
-	CreateHeader(page, "Fill color", R, -190);
-	c.sweepFillColor = CreateColorRow(page, "Color:", R + 6, -212, "s");
-	c.sweepFillPresets = CreatePresetRow(page, R + 6, -236, "s");
-	c.sweepFillAlpha = CreateSlider(page, "CursorReticleOptionsSweepFillAlpha", R + 6, -280, 10, 100, "10%", "100%",
-		OpacityLabel, Setter("sweepFillAlpha"));
+	UI.CreateHeader(page, "Fill color", R, -190);
+	c.sweepFillColor = UI.CreateColorRow(page, "Color:", R + 6, -212, "s");
+	c.sweepFillPresets = UI.CreatePresetRow(page, R + 6, -236, "s");
+	c.sweepFillAlpha = UI.CreateSlider(page, "CursorReticleOptionsSweepFillAlpha", R + 6, -280, 10, 100, "10%", "100%",
+		UI.OpacityLabel, UI.Setter("sweepFillAlpha"));
 
-	c.sweepOutlineCheck, c.sweepOutlineColor, c.sweepOutlineWidth = CreateOutlineOptions(page,
+	c.sweepOutlineCheck, c.sweepOutlineColor, c.sweepOutlineWidth = UI.CreateOutlineOptions(page,
 		"CursorReticleOptionsSweepOutline", R, -314, "sweepOutline", "so",
 		"A dark edge around the sweep, so it stays visible on bright ground.");
 
@@ -1646,30 +1772,32 @@ end
 
 local function BuildTextTab(page, c)
 	local L = TAB_LEFT[6];
-	CreateHeader(page, "Text", L, -66);
-	c.textHealth = CreateCheck(page, "CursorReticleOptionsTextHealth", "Health %", L, -84,
-		"Your health as a percentage, during a run.", Setter("textHealth"));
-	c.textShield = CreateCheck(page, "CursorReticleOptionsTextShield", "Shield", L + 20, -108,
+	UI.CreateHeader(page, "Text", L, -66);
+	c.textHealth = UI.CreateCheck(page, "CursorReticleOptionsTextHealth", "Health %", L, -84,
+		"Your health as a percentage, during a run.", UI.Setter("textHealth"));
+	c.textShield = UI.CreateCheck(page, "CursorReticleOptionsTextShield", "Shield", L + 20, -108,
 		"Adds your absorb shield after the health %, in the shield color: \"80% +30%\".\n\n"
 		.. "The shield is shown as a share of your max health, the same as health %, so the two "
 		.. "add up: 80% +30% means you can take damage worth 110% of your max health before "
 		.. "dying. It is not how much of the shield itself is left.\n\n"
 		.. "Shown only while you have a shield. Needs Health % to be on.",
-		Setter("textShield"));
-	c.textCooldown = CreateCheck(page, "CursorReticleOptionsTextCooldown", "Cooldown seconds", L, -132,
+		UI.Setter("textShield"));
+	c.textCooldown = UI.CreateCheck(page, "CursorReticleOptionsTextCooldown", "Cooldown seconds", L, -132,
 		"The seconds left on the cooldown sweep's spell while it recharges. Needs the sweep to be on.",
-		Setter("textCooldown"));
+		UI.Setter("textCooldown"));
 
-	CreateHeader(page, "Style", L, -166);
-	c.textPosMenu = CreateDropDown(page, "CursorReticleOptionsTextPos", L + 6, -190, "Where:",
-		ChoiceMenu("textPos", TEXT_POSITIONS, TEXT_POSITION_NAMES));
-	c.textSize = CreateSlider(page, "CursorReticleOptionsTextSize", L + 6, -236, 8, 24, "8", "24",
-		SizeLabel, Setter("textSize"));
-	c.textByHealth = CreateCheck(page, "CursorReticleOptionsTextByHealth", "Color health % by health", L, -270,
+	UI.CreateHeader(page, "Style", L, -166);
+	c.textPosMenu = UI.CreateDropDown(page, "CursorReticleOptionsTextPos", L + 6, -190, "Where:",
+		UI.ChoiceMenu("textPos", TEXT_POSITIONS, TEXT_POSITION_NAMES));
+	c.textFontMenu = UI.CreateDropDown(page, "CursorReticleOptionsTextFont", L + 6, -220, "Font:",
+		UI.ChoiceMenu("textFont", TEXT_FONTS, TEXT_FONT_NAMES));
+	c.textSize = UI.CreateSlider(page, "CursorReticleOptionsTextSize", L + 6, -266, 8, 24, "8", "24",
+		UI.SizeLabel, UI.Setter("textSize"));
+	c.textByHealth = UI.CreateCheck(page, "CursorReticleOptionsTextByHealth", "Color health % by health", L, -300,
 		"Colors the health % like the health circle: green when full, then yellow, orange and red.",
-		Setter("textByHealth"));
-	c.textColor = CreateColorRow(page, "Color:", L + 6, -300, "t");
-	c.textPresets = CreatePresetRow(page, L + 6, -324, "t");
+		UI.Setter("textByHealth"));
+	c.textColor = UI.CreateColorRow(page, "Color:", L + 6, -330, "t");
+	c.textPresets = UI.CreatePresetRow(page, L + 6, -354, "t");
 
 	table.insert(c.colorRows, c.textColor);
 end
@@ -1696,6 +1824,189 @@ local function RingNotes()
 			.. " tab's settings. Its size follows the sweep.";
 	end
 	return ring, health, sweep;
+end
+
+-- Copies the settings into the options window's controls <c>.
+local function RefreshValues(c)
+	c.enable:SetChecked(db.enabled);
+
+	c.showRing:SetChecked(db.showRing);
+	c.size:SetValue(db.size);
+	c.thickness:SetValue(db.thickness);
+	c.alpha:SetValue(db.alpha);
+	c.ringOutlineCheck:SetChecked(db.ringOutline);
+	c.ringOutlineWidth:SetValue(db.ringOutlineWidth);
+
+	c.healthEnable:SetChecked(db.healthEnabled);
+	c.healthSync:SetChecked(db.healthSync);
+	c.healthSize:SetValue(db[HealthSizeKey()]);
+	c.healthThickness:SetValue(db[HealthThicknessKey()]);
+	c.healthGradient:SetChecked(db.healthGradient);
+	c.healthAlpha:SetValue(db.healthAlpha);
+	c.healthShield:SetChecked(db.healthShield);
+	c.healthOutlineCheck:SetChecked(db.healthOutline);
+	c.healthOutlineWidth:SetValue(db.healthOutlineWidth);
+	c.healthPreview.SetRunning(previewHealth);
+
+	c.centerDot:SetChecked(db.centerDot);
+	c.centerCross:SetChecked(db.centerCross);
+	c.centerSize:SetValue(db.centerSize);
+	c.centerThickness:SetValue(db.centerThickness);
+	c.centerAlpha:SetValue(db.centerAlpha);
+	c.centerByHealth:SetChecked(db.centerByHealth);
+	c.centerOutlineCheck:SetChecked(db.centerOutline);
+	c.centerOutlineWidth:SetValue(db.centerOutlineWidth);
+
+	c.lowRed:SetChecked(db.lowRed);
+	c.lowPulse:SetChecked(db.lowPulse);
+	c.lowCenter:SetChecked(db.lowCenter);
+	c.lowSweepMain:SetChecked(db.lowSweepMain);
+	c.lowSweepFill:SetChecked(db.lowSweepFill);
+	c.lowAt:SetValue(db.lowAt);
+	c.lowPreview.SetRunning(previewLow);
+
+	c.sweepEnable:SetChecked(db.sweepEnabled);
+	c.sweepSync:SetChecked(db.sweepSync);
+	c.sweepSize:SetValue(db[SweepSizeKey()]);
+	c.sweepThickness:SetValue(db[SweepThicknessKey()]);
+	c.sweepAlpha:SetValue(db.sweepAlpha);
+	c.sweepFillAlpha:SetValue(db.sweepFillAlpha);
+	c.sweepOutlineCheck:SetChecked(db.sweepOutline);
+	c.sweepOutlineWidth:SetValue(db.sweepOutlineWidth);
+	c.ringPosMenu.SetValueText(RING_POSITION_NAMES[db.sweepRingPos]);
+	c.ringTypeMenu.SetValueText(RING_TYPE_NAMES[db.sweepRingType]);
+	c.sweepPreview.SetRunning(previewSweep);
+
+	c.textHealth:SetChecked(db.textHealth);
+	c.textShield:SetChecked(db.textShield);
+	c.textCooldown:SetChecked(db.textCooldown);
+	c.textPosMenu.SetValueText(TEXT_POSITION_NAMES[db.textPos]);
+	c.textFontMenu.SetValueText(TEXT_FONT_NAMES[db.textFont]);
+	c.textSize:SetValue(db.textSize);
+	c.textByHealth:SetChecked(db.textByHealth);
+
+	for i = 1, table.getn(c.colorRows) do
+		local row = c.colorRows[i];
+		local p = row.prefix;
+		row.swatch.fill:SetVertexColor(db[p .. "r"], db[p .. "g"], db[p .. "b"]);
+	end
+
+	local class, className = CurrentClass();
+	local key = TrackedKey();
+	c.spellMenu.SetValueText(key and SpellName(key) or "Choose a spell");
+	if ( not class ) then
+		c.spellHint:SetText("Start a run to choose a spell.");
+	else
+		c.spellHint:SetText("Lists the spells you've had in a run as " .. (className or class)
+			.. ". They stay listed for later runs (" .. table.getn(db.seen[class] or {})
+			.. " so far).");
+	end
+
+	local ringNote, healthNote, sweepNote = RingNotes();
+	c.ringNote:SetText(ringNote or "");
+	ShowIf(c.ringNote, ringNote);
+	c.healthNote:SetText(healthNote);
+	c.ringPosNote:SetText(sweepNote);
+end
+
+-- Greys out the controls in <c> that don't apply; with the addon off, nothing can be
+-- changed.
+local function RefreshStates(c)
+	local on = db.enabled;
+	local sweepOn = db.sweepEnabled;
+	local ringOn = MainRingVisible();
+	local hpOn = HealthRingVisible();
+	local center = db.centerDot or db.centerCross;
+	local warnColor = (db.lowRed and ringOn) or (db.lowCenter and center)
+		or ((db.lowSweepMain or db.lowSweepFill) and sweepOn);
+	local function State(name, active)
+		UI.SetControlState(c[name], active, on and active);
+	end
+	c.main:SetAlpha(on and 1 or GREYED);
+
+	State("showRing", not sweepOn and not db.healthEnabled);
+	State("size", ringOn and not BesideSweep("ring"));
+	State("thickness", ringOn);
+	State("alpha", ringOn);
+	State("ringColor", ringOn);
+	State("ringPresets", ringOn);
+	State("ringOutlineCheck", ringOn);
+	State("ringOutlineColor", ringOn and db.ringOutline);
+	State("ringOutlineWidth", ringOn and db.ringOutline);
+
+	State("healthEnable", not sweepOn);
+	State("healthPreview", hpOn or (center and db.centerByHealth) or db.textHealth);
+	State("healthSync", hpOn);
+	State("healthSize", hpOn and not BesideSweep("health"));
+	State("healthThickness", hpOn);
+	State("healthGradient", hpOn);
+	State("healthColor", hpOn and not db.healthGradient);
+	State("healthPresets", hpOn and not db.healthGradient);
+	State("healthAlpha", hpOn);
+	State("healthShield", hpOn);
+	State("healthShieldColor", hpOn and db.healthShield);
+	State("healthOutlineCheck", hpOn);
+	State("healthOutlineColor", hpOn and db.healthOutline);
+	State("healthOutlineWidth", hpOn and db.healthOutline);
+
+	State("centerDot", true);
+	State("centerCross", true);
+	State("centerSize", center);
+	State("centerThickness", db.centerCross);
+	State("centerAlpha", center);
+	State("centerByHealth", center);
+	State("centerColor", center and not db.centerByHealth);
+	State("centerPresets", center and not db.centerByHealth);
+	State("centerOutlineCheck", center);
+	State("centerOutlineColor", center and db.centerOutline);
+	State("centerOutlineWidth", center and db.centerOutline);
+
+	State("lowRed", ringOn);
+	State("lowPulse", AnyRing());
+	State("lowCenter", center);
+	State("lowSweepMain", sweepOn);
+	State("lowSweepFill", sweepOn);
+	State("lowColor", warnColor);
+	State("lowAt", warnColor or (db.lowPulse and AnyRing()));
+	State("lowPreview", warnColor or (db.lowPulse and AnyRing()));
+
+	State("sweepEnable", true);
+	State("sweepPreview", sweepOn);
+	State("spellMenu", sweepOn);
+	State("sweepSync", sweepOn and not ExtraRingShown());
+	State("sweepSize", sweepOn);
+	State("sweepThickness", sweepOn);
+	State("ringPosMenu", sweepOn);
+	State("ringTypeMenu", ExtraRingShown());
+	State("sweepMainColor", sweepOn);
+	State("sweepMainPresets", sweepOn);
+	State("sweepAlpha", sweepOn);
+	State("sweepFillColor", sweepOn);
+	State("sweepFillPresets", sweepOn);
+	State("sweepFillAlpha", sweepOn);
+	State("sweepOutlineCheck", sweepOn);
+	State("sweepOutlineColor", sweepOn and db.sweepOutline);
+	State("sweepOutlineWidth", sweepOn and db.sweepOutline);
+
+	local anyText = db.textHealth or (db.textCooldown and sweepOn);
+	State("textHealth", true);
+	State("textShield", db.textHealth);
+	State("textCooldown", sweepOn);
+	State("textPosMenu", anyText);
+	State("textFontMenu", anyText);
+	State("textSize", anyText);
+	State("textByHealth", db.textHealth);
+	State("textColor", anyText);
+	State("textPresets", anyText);
+end
+
+-- Brings the options window up to date: in two functions, as a Lua 5.0 function can use
+-- at most 32 locals from around it.
+local function RefreshOptions(c)
+	refreshing = true;
+	RefreshValues(c);
+	RefreshStates(c);
+	refreshing = false;
 end
 
 local function CreateOptions()
@@ -1735,8 +2046,8 @@ local function CreateOptions()
 	close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -5, -5);
 	close:SetScript("OnClick", function() f:Hide(); end);
 
-	local enable = CreateCheck(f, "CursorReticleOptionsEnable", "Enable addon", 24, -30,
-		"Turns everything Cursor Reticle draws on or off.", Setter("enabled"));
+	local enable = UI.CreateCheck(f, "CursorReticleOptionsEnable", "Enable addon", 24, -30,
+		"Turns everything Cursor Reticle draws on or off.", UI.Setter("enabled"));
 
 	-- The tabs' pages, in one frame so they can be greyed out at once while the addon is off.
 	local main = CreateFrame("Frame", nil, f);
@@ -1778,6 +2089,7 @@ local function CreateOptions()
 		enable:ClearAllPoints();
 		enable:SetPoint("TOPLEFT", f, "TOPLEFT", TAB_LEFT[id] - 4, -30);
 		f.tabId = id;
+		UI.CloseMenu();
 		PanelTemplates_SetTab(f, id);
 		for i = 1, table.getn(pages) do
 			ShowIf(pages[i], i == id);
@@ -1798,179 +2110,14 @@ local function CreateOptions()
 	reset:SetPoint("BOTTOM", f, "BOTTOM", 0, 22);
 	reset:SetText("Reset to defaults");
 	reset:SetScript("OnClick", function() ResetTab(f.tabId); end);
-	AddTooltip(reset, "Resets the settings on this tab. The spells seen so far are kept.");
+	UI.AddTooltip(reset, "Resets the settings on this tab. The spells seen so far are kept.");
 
-	f.Refresh = function()
-		refreshing = true;
-		c.enable:SetChecked(db.enabled);
-
-		c.showRing:SetChecked(db.showRing);
-		c.size:SetValue(db.size);
-		c.thickness:SetValue(db.thickness);
-		c.alpha:SetValue(db.alpha);
-		c.ringOutlineCheck:SetChecked(db.ringOutline);
-		c.ringOutlineWidth:SetValue(db.ringOutlineWidth);
-
-		c.healthEnable:SetChecked(db.healthEnabled);
-		c.healthSync:SetChecked(db.healthSync);
-		c.healthSize:SetValue(db[HealthSizeKey()]);
-		c.healthThickness:SetValue(db[HealthThicknessKey()]);
-		c.healthGradient:SetChecked(db.healthGradient);
-		c.healthAlpha:SetValue(db.healthAlpha);
-		c.healthShield:SetChecked(db.healthShield);
-		c.healthOutlineCheck:SetChecked(db.healthOutline);
-		c.healthOutlineWidth:SetValue(db.healthOutlineWidth);
-		c.healthPreview.SetRunning(previewHealth);
-
-		c.centerDot:SetChecked(db.centerDot);
-		c.centerCross:SetChecked(db.centerCross);
-		c.centerSize:SetValue(db.centerSize);
-		c.centerThickness:SetValue(db.centerThickness);
-		c.centerAlpha:SetValue(db.centerAlpha);
-		c.centerByHealth:SetChecked(db.centerByHealth);
-		c.centerOutlineCheck:SetChecked(db.centerOutline);
-		c.centerOutlineWidth:SetValue(db.centerOutlineWidth);
-
-		c.lowRed:SetChecked(db.lowRed);
-		c.lowPulse:SetChecked(db.lowPulse);
-		c.lowCenter:SetChecked(db.lowCenter);
-		c.lowSweepMain:SetChecked(db.lowSweepMain);
-		c.lowSweepFill:SetChecked(db.lowSweepFill);
-		c.lowAt:SetValue(db.lowAt);
-		c.lowPreview.SetRunning(previewLow);
-
-		c.sweepEnable:SetChecked(db.sweepEnabled);
-		c.sweepSync:SetChecked(db.sweepSync);
-		c.sweepSize:SetValue(db[SweepSizeKey()]);
-		c.sweepThickness:SetValue(db[SweepThicknessKey()]);
-		c.sweepAlpha:SetValue(db.sweepAlpha);
-		c.sweepFillAlpha:SetValue(db.sweepFillAlpha);
-		c.sweepOutlineCheck:SetChecked(db.sweepOutline);
-		c.sweepOutlineWidth:SetValue(db.sweepOutlineWidth);
-		c.ringPosMenu.SetValueText(RING_POSITION_NAMES[db.sweepRingPos]);
-		c.ringTypeMenu.SetValueText(RING_TYPE_NAMES[db.sweepRingType]);
-		c.sweepPreview.SetRunning(previewSweep);
-
-		c.textHealth:SetChecked(db.textHealth);
-		c.textShield:SetChecked(db.textShield);
-		c.textCooldown:SetChecked(db.textCooldown);
-		c.textPosMenu.SetValueText(TEXT_POSITION_NAMES[db.textPos]);
-		c.textSize:SetValue(db.textSize);
-		c.textByHealth:SetChecked(db.textByHealth);
-
-		for i = 1, table.getn(c.colorRows) do
-			local row = c.colorRows[i];
-			local p = row.prefix;
-			row.swatch.fill:SetVertexColor(db[p .. "r"], db[p .. "g"], db[p .. "b"]);
-		end
-
-		local class, className = CurrentClass();
-		local key = TrackedKey();
-		c.spellMenu.SetValueText(key and SpellName(key) or "Choose a spell");
-		if ( not class ) then
-			c.spellHint:SetText("Start a run to choose a spell.");
-		else
-			c.spellHint:SetText("Lists the spells you've had in a run as " .. (className or class)
-				.. ". They stay listed for later runs (" .. table.getn(db.seen[class] or {})
-				.. " so far).");
-		end
-
-		local ringNote, healthNote, sweepNote = RingNotes();
-		c.ringNote:SetText(ringNote or "");
-		ShowIf(c.ringNote, ringNote);
-		c.healthNote:SetText(healthNote);
-		c.ringPosNote:SetText(sweepNote);
-
-		-- Grey out what doesn't apply; with the addon off, nothing can be changed.
-		local on = db.enabled;
-		local sweepOn = db.sweepEnabled;
-		local ringOn = MainRingVisible();
-		local hpOn = HealthRingVisible();
-		local center = db.centerDot or db.centerCross;
-		local warnColor = (db.lowRed and ringOn) or (db.lowCenter and center)
-			or ((db.lowSweepMain or db.lowSweepFill) and sweepOn);
-		local function State(name, active)
-			SetControlState(c[name], active, on and active);
-		end
-		c.main:SetAlpha(on and 1 or GREYED);
-
-		State("showRing", not sweepOn and not db.healthEnabled);
-		State("size", ringOn and not BesideSweep("ring"));
-		State("thickness", ringOn);
-		State("alpha", ringOn);
-		State("ringColor", ringOn);
-		State("ringPresets", ringOn);
-		State("ringOutlineCheck", ringOn);
-		State("ringOutlineColor", ringOn and db.ringOutline);
-		State("ringOutlineWidth", ringOn and db.ringOutline);
-
-		State("healthEnable", not sweepOn);
-		State("healthPreview", hpOn or (center and db.centerByHealth) or db.textHealth);
-		State("healthSync", hpOn);
-		State("healthSize", hpOn and not BesideSweep("health"));
-		State("healthThickness", hpOn);
-		State("healthGradient", hpOn);
-		State("healthColor", hpOn and not db.healthGradient);
-		State("healthPresets", hpOn and not db.healthGradient);
-		State("healthAlpha", hpOn);
-		State("healthShield", hpOn);
-		State("healthShieldColor", hpOn and db.healthShield);
-		State("healthOutlineCheck", hpOn);
-		State("healthOutlineColor", hpOn and db.healthOutline);
-		State("healthOutlineWidth", hpOn and db.healthOutline);
-
-		State("centerDot", true);
-		State("centerCross", true);
-		State("centerSize", center);
-		State("centerThickness", db.centerCross);
-		State("centerAlpha", center);
-		State("centerByHealth", center);
-		State("centerColor", center and not db.centerByHealth);
-		State("centerPresets", center and not db.centerByHealth);
-		State("centerOutlineCheck", center);
-		State("centerOutlineColor", center and db.centerOutline);
-		State("centerOutlineWidth", center and db.centerOutline);
-
-		State("lowRed", ringOn);
-		State("lowPulse", AnyRing());
-		State("lowCenter", center);
-		State("lowSweepMain", sweepOn);
-		State("lowSweepFill", sweepOn);
-		State("lowColor", warnColor);
-		State("lowAt", warnColor or (db.lowPulse and AnyRing()));
-		State("lowPreview", warnColor or (db.lowPulse and AnyRing()));
-
-		State("sweepEnable", true);
-		State("sweepPreview", sweepOn);
-		State("spellMenu", sweepOn);
-		State("sweepSync", sweepOn and not ExtraRingShown());
-		State("sweepSize", sweepOn);
-		State("sweepThickness", sweepOn);
-		State("ringPosMenu", sweepOn);
-		State("ringTypeMenu", ExtraRingShown());
-		State("sweepMainColor", sweepOn);
-		State("sweepMainPresets", sweepOn);
-		State("sweepAlpha", sweepOn);
-		State("sweepFillColor", sweepOn);
-		State("sweepFillPresets", sweepOn);
-		State("sweepFillAlpha", sweepOn);
-		State("sweepOutlineCheck", sweepOn);
-		State("sweepOutlineColor", sweepOn and db.sweepOutline);
-		State("sweepOutlineWidth", sweepOn and db.sweepOutline);
-
-		local anyText = db.textHealth or (db.textCooldown and sweepOn);
-		State("textHealth", true);
-		State("textShield", db.textHealth);
-		State("textCooldown", sweepOn);
-		State("textPosMenu", anyText);
-		State("textSize", anyText);
-		State("textByHealth", db.textHealth);
-		State("textColor", anyText);
-		State("textPresets", anyText);
-		refreshing = false;
-	end;
+	f.Refresh = function() RefreshOptions(c); end;
 	f:SetScript("OnShow", f.Refresh);
-	f:SetScript("OnHide", StopPreviews);
+	f:SetScript("OnHide", function()
+		StopPreviews();
+		UI.CloseMenu();
+	end);
 
 	return f;
 end
