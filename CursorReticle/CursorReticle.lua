@@ -13,8 +13,9 @@ local EDGE_OUTER = 62;
 local EDGE_WIDTHS = { 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12, 14, 17, 20, 24, 30 };
 local DOT_RADIUS = 14.5 / 32;
 
-local TAB_NAMES = { "Circle", "Health circle", "Center", "Low health", "Cooldown sweep", "Text" };
-local TAB_SIZES = { { 540, 492 }, { 590, 420 }, { 540, 500 }, { 540, 310 }, { 590, 500 }, { 540, 440 } };
+local TAB_NAMES = { "Circle", "Health circle", "Center", "Low health", "Cooldown sweep", "Text", "Save" };
+local WINDOW_SIZE = { 600, 600 };   -- the options window's size, the same on every tab
+local MAX_SAVES = 10;         -- saved cursors at most
 
 -- Where the text goes around the rings: the text's anchor point, and the direction away from
 -- the cursor.
@@ -150,6 +151,10 @@ local DEFAULTS = {
 	textFont = "friz",
 	textByHealth = true,       -- health % colored by health
 	tr = 1, tg = 1, tb = 1,
+
+	-- Saved cursors, { name, settings }: every tab's settings except the tracked spells.
+	saves = {},
+	windowScale = 100,         -- the options window's size, in %
 };
 
 -- Ability keys whose name can't be worked out from the key itself.
@@ -203,10 +208,16 @@ local function HealthFraction()
 	return run.hp / run.hpm, (run.sh or 0) / run.hpm;
 end
 
+-- The hero's class key ("mage", ...) and its name. AZS_ZONE has been seen without its class
+-- after a game update, so the player's own class stands in: the same keys, in capitals.
 local function CurrentClass()
 	local zone = AZS_ZONE;
 	if ( type(zone) == "table" and zone.class and zone.class ~= "" ) then
 		return zone.class, zone.cname;
+	end
+	local name, key = UnitClass("player");
+	if ( key ) then
+		return string.lower(key), name;
 	end
 end
 
@@ -449,12 +460,63 @@ end
 -- round, in a frame of its own (above the rings) for its opacity.
 local function CreateFill(parent)
 	local frame = CreateFrame("Frame", nil, parent);
-	frame:SetFrameStrata("TOOLTIP");
+	frame:SetFrameStrata(parent:GetFrameStrata());
 	frame:SetWidth(1);
 	frame:SetHeight(1);
 	frame:SetPoint("CENTER", parent, "CENTER", 0, 0);
 	-- count: dots in use for the current size; lit: dots shown, -1 while hidden
 	return { frame = frame, dots = {}, count = 0, lit = -1 };
+end
+
+-- A dot, bar or outline piece of a center mark, in frame <f>.
+local function CenterTexture(f, layer, texture)
+	local t = f:CreateTexture(nil, layer);
+	if ( texture ) then
+		t:SetTexture(texture);
+	else
+		t:SetTexture(1, 1, 1);
+	end
+	t:SetPoint("CENTER", f, "CENTER", 0, 0);
+	return t;
+end
+
+-- A reticle: everything drawn around one point, in <parent>. The cursor has one, and each
+-- saved cursor's preview has one. Its parts:
+--   body: the rings and fills, in a frame of their own so the pulse can scale them together
+--   ring, hp, track: the main circle, the health circle's missing part, the sweep's main color
+--   hpFill, shieldFill, sweepFill: the health circle's fill and shield, the sweep's fill
+--   center: the dot or crosshair, above the rest, in a frame of its own for its opacity
+local function CreateReticle(parent)
+	local strata = parent:GetFrameStrata();
+	local R = {};
+	R.body = CreateFrame("Frame", nil, parent);
+	R.body:SetFrameStrata(strata);
+	R.body:SetWidth(1);
+	R.body:SetHeight(1);
+	R.body:SetPoint("CENTER", parent, "CENTER", 0, 0);
+	R.ring = CreateRingObject(R.body);
+	R.hp = CreateRingObject(R.body);
+	R.track = CreateRingObject(R.body);
+	R.hpFill = CreateFill(R.body);
+	R.shieldFill = CreateFill(R.body);
+	R.sweepFill = CreateFill(R.body);
+	R.shieldFill.frame:SetFrameLevel(R.hpFill.frame:GetFrameLevel() + 1);
+
+	R.center = CreateFrame("Frame", nil, parent);
+	R.center:SetFrameStrata(strata);
+	R.center:SetAllPoints(parent);
+	R.center:SetFrameLevel(R.body:GetFrameLevel() + 3);
+	R.dot = CenterTexture(R.center, "ARTWORK", MEDIA .. "dot");
+	R.dotEdge = CenterTexture(R.center, "BORDER");
+	R.crossH = CenterTexture(R.center, "ARTWORK");
+	R.crossV = CenterTexture(R.center, "ARTWORK");
+	-- The crosshair's outline: strips around the edge of the "+", none under its lines (see
+	-- LayoutCrossOutline).
+	R.crossOutline = {};
+	for i = 1, 12 do
+		R.crossOutline[i] = CenterTexture(R.center, "BORDER");
+	end
+	return R;
 end
 
 -- Follows the cursor and holds everything else.
@@ -463,54 +525,13 @@ holder:SetFrameStrata("TOOLTIP");
 holder:SetWidth(1);
 holder:SetHeight(1);
 holder:Hide();
-
--- The rings, in a frame of their own so the pulse can scale them together.
-local body = CreateFrame("Frame", nil, holder);
-body:SetFrameStrata("TOOLTIP");
-body:SetWidth(1);
-body:SetHeight(1);
-body:SetPoint("CENTER", holder, "CENTER", 0, 0);
-local ringObj = CreateRingObject(body);    -- the main ring
-local hpObj = CreateRingObject(body);      -- the health ring's missing part
-local trackObj = CreateRingObject(body);   -- the sweep's main color
-local hpFill = CreateFill(body);           -- the health ring's fill
-local shieldFill = CreateFill(body);       -- the health ring's shield, over the health's end
-local sweepFill = CreateFill(body);        -- the sweep's fill
-shieldFill.frame:SetFrameLevel(hpFill.frame:GetFrameLevel() + 1);
-
--- The center mark, above everything, in a frame of its own for its opacity.
-local centerFrame = CreateFrame("Frame", nil, holder);
-centerFrame:SetFrameStrata("TOOLTIP");
-centerFrame:SetAllPoints(holder);
-centerFrame:SetFrameLevel(body:GetFrameLevel() + 3);
-
-local function CenterTexture(layer, texture)
-	local t = centerFrame:CreateTexture(nil, layer);
-	if ( texture ) then
-		t:SetTexture(texture);
-	else
-		t:SetTexture(1, 1, 1);
-	end
-	t:SetPoint("CENTER", centerFrame, "CENTER", 0, 0);
-	return t;
-end
-
-local dot = CenterTexture("ARTWORK", MEDIA .. "dot");
-local dotEdge = CenterTexture("BORDER");
-local crossH = CenterTexture("ARTWORK");
-local crossV = CenterTexture("ARTWORK");
--- The crosshair's outline: strips around the edge of the "+", none under its lines (see
--- LayoutCrossOutline).
-local crossOutline = {};
-for i = 1, 12 do
-	crossOutline[i] = CenterTexture("BORDER");
-end
+local cursor = CreateReticle(holder);   -- the reticle at the cursor
 
 -- The text beside the rings, above everything, unaffected by the pulse.
 local textFrame = CreateFrame("Frame", nil, holder);
 textFrame:SetFrameStrata("TOOLTIP");
 textFrame:SetAllPoints(holder);
-textFrame:SetFrameLevel(body:GetFrameLevel() + 4);
+textFrame:SetFrameLevel(cursor.body:GetFrameLevel() + 4);
 local readout = textFrame:CreateFontString(nil, "OVERLAY");
 
 local lowHealth = false;
@@ -534,14 +555,14 @@ local function WarnableColor(prefix, warnKey)
 	return db[prefix .. "r"], db[prefix .. "g"], db[prefix .. "b"];
 end
 
--- The main ring, and the sweep's main color.
-local function LayoutRings()
+-- Reticle <R>'s main circle, and the sweep's main color.
+local function LayoutRings(R)
 	local r, g, b = WarnableColor("", "lowRed");
-	DrawRing(ringObj, MainRingVisible(), MainRingSize(), db.thickness, r, g, b, db.alpha / 100,
+	DrawRing(R.ring, MainRingVisible(), MainRingSize(), db.thickness, r, g, b, db.alpha / 100,
 		RingOutlineWidth(), "ro");
 
 	r, g, b = WarnableColor("sm", "lowSweepMain");
-	DrawRing(trackObj, db.sweepEnabled, SweepSize(), SweepThickness(), r, g, b,
+	DrawRing(R.track, db.sweepEnabled, SweepSize(), SweepThickness(), r, g, b,
 		db.sweepAlpha / 100, SweepOutlineWidth(), "so");
 end
 
@@ -590,11 +611,20 @@ local function HealthShare()
 	return HealthFraction();
 end
 
+-- The health and shield reticle <R> shows: a saved cursor's preview has a fixed sample,
+-- the cursor follows the game (or the preview).
+local function ReticleHealth(R)
+	if ( R.sample ) then
+		return R.sample[1], R.sample[2];
+	end
+	return HealthShare();
+end
+
 -- Outlines a "+" of arms <s> long and <t> thick with strips <w> wide around its edge, so a
 -- see-through crosshair doesn't show the outline through its lines: a cap at each arm's
 -- end, and a strip along each side of each arm. The horizontal arms' strips cover the inner
 -- corners, so no two strips overlap.
-local function LayoutCrossOutline(shown, s, t, w)
+local function LayoutCrossOutline(R, shown, s, t, w)
 	local h, a = s / 2, t / 2;
 	local along = h - a;          -- a horizontal arm's side, from the center lines out
 	local up = h - a - w;         -- a vertical arm's side, clear of the corners
@@ -606,10 +636,10 @@ local function LayoutCrossOutline(shown, s, t, w)
 		{ -(a + w / 2), a + w + up / 2, w, up }, { a + w / 2, a + w + up / 2, w, up },
 		{ -(a + w / 2), -(a + w + up / 2), w, up }, { a + w / 2, -(a + w + up / 2), w, up },
 	};
-	for i = 1, table.getn(crossOutline) do
-		local o, r = crossOutline[i], rects[i];
+	for i = 1, table.getn(R.crossOutline) do
+		local o, r = R.crossOutline[i], rects[i];
 		if ( shown and r[3] > 0 and r[4] > 0 ) then
-			o:SetPoint("CENTER", centerFrame, "CENTER", r[1], r[2]);
+			o:SetPoint("CENTER", R.center, "CENTER", r[1], r[2]);
 			SetSize(o, r[3], r[4]);
 			o:SetVertexColor(db.cor, db.cog, db.cob);
 			o:Show();
@@ -619,49 +649,48 @@ local function LayoutCrossOutline(shown, s, t, w)
 	end
 end
 
-local centerColoredAt;   -- the health the center mark was last colored for
-
--- The dot and crosshair's color: the warning color at low health, else by health or its own.
-local function ColorCenter()
+-- The dot and crosshair's color: the warning color at low health, else by health (at the
+-- health R.colorAt it was last colored for) or its own.
+local function ColorCenter(R)
 	local r, g, b = WarnableColor("c", "lowCenter");
 	if ( db.centerByHealth and not (lowHealth and db.lowCenter) ) then
-		r, g, b = HealthColor(centerColoredAt or 1);
+		r, g, b = HealthColor(R.colorAt or 1);
 	end
-	dot:SetVertexColor(r, g, b);
-	crossH:SetVertexColor(r, g, b);
-	crossV:SetVertexColor(r, g, b);
+	R.dot:SetVertexColor(r, g, b);
+	R.crossH:SetVertexColor(r, g, b);
+	R.crossV:SetVertexColor(r, g, b);
 end
 
 -- Recolors the center mark when it is colored by health and health moved on.
-local function UpdateCenterHealthColor()
+local function UpdateCenterHealthColor(R)
 	if ( not db.centerByHealth ) then return; end
-	local f = HealthShare() or 1;
-	if ( not centerColoredAt or math.abs(f - centerColoredAt) >= 0.01 ) then
-		centerColoredAt = f;
-		ColorCenter();
+	local f = ReticleHealth(R) or 1;
+	if ( not R.colorAt or math.abs(f - R.colorAt) >= 0.01 ) then
+		R.colorAt = f;
+		ColorCenter(R);
 	end
 end
 
-local function LayoutCenter()
+local function LayoutCenter(R)
 	local s, t, w = db.centerSize, db.centerThickness, CenterOutlineWidth();
-	centerFrame:SetAlpha(db.centerAlpha / 100);
-	centerColoredAt = db.centerByHealth and (HealthShare() or 1) or nil;
-	ColorCenter();
+	R.center:SetAlpha(db.centerAlpha / 100);
+	R.colorAt = db.centerByHealth and (ReticleHealth(R) or 1) or nil;
+	ColorCenter(R);
 
-	SetSize(dot, s, s);
-	ShowIf(dot, db.centerDot);
+	SetSize(R.dot, s, s);
+	ShowIf(R.dot, db.centerDot);
 	if ( db.centerDot and w > 0 ) then
-		PlaceEdge(dotEdge, s * DOT_RADIUS + w, w);
-		dotEdge:SetVertexColor(db.cor, db.cog, db.cob);
+		PlaceEdge(R.dotEdge, s * DOT_RADIUS + w, w);
+		R.dotEdge:SetVertexColor(db.cor, db.cog, db.cob);
 	else
-		dotEdge:Hide();
+		R.dotEdge:Hide();
 	end
 
-	SetSize(crossH, s, t);
-	SetSize(crossV, t, s);
-	ShowIf(crossH, db.centerCross);
-	ShowIf(crossV, db.centerCross);
-	LayoutCrossOutline(db.centerCross and w > 0, s, t, w);
+	SetSize(R.crossH, s, t);
+	SetSize(R.crossV, t, s);
+	ShowIf(R.crossH, db.centerCross);
+	ShowIf(R.crossV, db.centerCross);
+	LayoutCrossOutline(R, db.centerCross and w > 0, s, t, w);
 end
 
 local function ColorFill(f, r, g, b)
@@ -740,58 +769,57 @@ local function SetFillProgress(f, progress)
 	end
 end
 
-local function LayoutSweepFill()
-	LayoutFill(sweepFill, db.sweepEnabled, SweepSize(), SweepThickness(), SweepOutlineWidth(),
+local function LayoutSweepFill(R)
+	LayoutFill(R.sweepFill, db.sweepEnabled, SweepSize(), SweepThickness(), SweepOutlineWidth(),
 		db.sweepFillAlpha / 100);
-	ColorFill(sweepFill, WarnableColor("s", "lowSweepFill"));
+	ColorFill(R.sweepFill, WarnableColor("s", "lowSweepFill"));
 end
 
-local hpColored;   -- the health the ring was last colored for, or nil to color it again
-
--- The health ring's fill and colors: the share of health (or the preview's) during a run.
--- The fill and the missing part share one color: the fill color, or the color by health.
-local function UpdateHealthRing()
-	UpdateCenterHealthColor();
+-- Reticle <R>'s health circle fill and colors: the share of health it shows (see
+-- ReticleHealth). The fill and the missing part share one color: the fill color, or the
+-- color by health (at the health R.hpColored it was last colored for).
+local function UpdateHealthRing(R)
+	UpdateCenterHealthColor(R);
 	local shown = HealthRingVisible();
 	local f, shield;
 	if ( shown ) then
-		f, shield = HealthShare();
+		f, shield = ReticleHealth(R);
 	end
-	SetFillProgress(hpFill, f);
+	SetFillProgress(R.hpFill, f);
 	-- The shield colors the end of the health fill, as much of it as the shield is worth, so
 	-- it shrinks back toward where health ends as it is used up.
 	if ( f and db.healthShield and shield and shield > 0 ) then
-		SetFillRange(shieldFill, math.max(0, f - shield), f);
+		SetFillRange(R.shieldFill, math.max(0, f - shield), f);
 	else
-		SetFillRange(shieldFill, nil);
+		SetFillRange(R.shieldFill, nil);
 	end
 	if ( not shown ) then return; end
 	-- Outside a run the ring shows as full.
 	local colorAt = f or 1;
-	if ( not hpColored or (db.healthGradient and math.abs(colorAt - hpColored) >= 0.01) ) then
-		hpColored = colorAt;
+	if ( not R.hpColored or (db.healthGradient and math.abs(colorAt - R.hpColored) >= 0.01) ) then
+		R.hpColored = colorAt;
 		local r, g, b = db.hr, db.hg, db.hb;
 		if ( db.healthGradient ) then
 			r, g, b = HealthColor(colorAt);
 		end
-		ColorFill(hpFill, r, g, b);
-		hpObj.line:SetVertexColor(r, g, b, HEALTH_MISSING);
+		ColorFill(R.hpFill, r, g, b);
+		R.hp.line:SetVertexColor(r, g, b, HEALTH_MISSING);
 	end
 end
 
-local function LayoutHealthRing()
+local function LayoutHealthRing(R)
 	local shown, size, k, w = HealthRingVisible(), HealthRingSize(), HealthThickness(), HealthOutlineWidth();
-	DrawRing(hpObj, shown, size, k, 1, 1, 1, HEALTH_MISSING, w, "ho");
-	LayoutFill(hpFill, shown, size, k, w, db.healthAlpha / 100);
-	LayoutFill(shieldFill, shown and db.healthShield, size, k, w, db.healthAlpha / 100);
-	ColorFill(shieldFill, db.hsr, db.hsg, db.hsb);
-	hpColored = nil;
-	UpdateHealthRing();
+	DrawRing(R.hp, shown, size, k, 1, 1, 1, HEALTH_MISSING, w, "ho");
+	LayoutFill(R.hpFill, shown, size, k, w, db.healthAlpha / 100);
+	LayoutFill(R.shieldFill, shown and db.healthShield, size, k, w, db.healthAlpha / 100);
+	ColorFill(R.shieldFill, db.hsr, db.hsg, db.hsb);
+	R.hpColored = nil;
+	UpdateHealthRing(R);
 end
 
 local function SetRingScale(scale)
 	ringScale = scale;
-	body:SetScale(scale);
+	cursor.body:SetScale(scale);
 end
 
 -- The sweep reads the spell's cooldown when AZS_SPELLS changes and counts it down on the
@@ -803,13 +831,13 @@ local function UpdateSweep()
 	cooldownLeft = nil;
 	if ( previewSweep ) then
 		local p = math.mod(GetTime() - previewStart, PREVIEW_COOLDOWN) / PREVIEW_COOLDOWN;
-		SetFillProgress(sweepFill, p);
+		SetFillProgress(cursor.sweepFill, p);
 		cooldownLeft = PREVIEW_COOLDOWN * (1 - p);
 		return;
 	end
 	local key = db.sweepEnabled and RUN_PHASES[Phase()] and TrackedKey();
 	if ( not key ) then
-		SetFillProgress(sweepFill, nil);
+		SetFillProgress(cursor.sweepFill, nil);
 		return;
 	end
 	if ( key ~= sweepKey ) then
@@ -835,12 +863,12 @@ local function UpdateSweep()
 		end
 	end
 	if ( not sweepMax ) then
-		SetFillProgress(sweepFill, nil);
+		SetFillProgress(cursor.sweepFill, nil);
 		return;
 	end
 	local left = sweepLeft - (RunTime() - sweepStart);
 	if ( left < 0 ) then left = 0; end
-	SetFillProgress(sweepFill, 1 - left / sweepMax);
+	SetFillProgress(cursor.sweepFill, 1 - left / sweepMax);
 	cooldownLeft = left;
 end
 
@@ -921,9 +949,9 @@ end
 
 local function UpdateLowHealth()
 	if ( not CheckLowHealth() ) then return; end
-	LayoutRings();
-	LayoutCenter();
-	ColorFill(sweepFill, WarnableColor("s", "lowSweepFill"));
+	LayoutRings(cursor);
+	LayoutCenter(cursor);
+	ColorFill(cursor.sweepFill, WarnableColor("s", "lowSweepFill"));
 	if ( not lowHealth ) then
 		pulseTime = 0;
 		SetRingScale(1);
@@ -950,10 +978,10 @@ holder:SetScript("OnUpdate", function()
 	if ( healthTimer >= 0.1 ) then
 		healthTimer = 0;
 		UpdateLowHealth();
-		UpdateHealthRing();
+		UpdateHealthRing(cursor);
 		UpdateText();
 	elseif ( previewHealth ) then
-		UpdateHealthRing();
+		UpdateHealthRing(cursor);
 	end
 	if ( Pulsing() ) then
 		pulseTime = pulseTime + elapsed;
@@ -977,10 +1005,10 @@ local function ApplySettings()
 		ringScale = 1;
 	end
 	SetRingScale(ringScale);
-	LayoutRings();
-	LayoutCenter();
-	LayoutSweepFill();
-	LayoutHealthRing();
+	LayoutRings(cursor);
+	LayoutCenter(cursor);
+	LayoutSweepFill(cursor);
+	LayoutHealthRing(cursor);
 	LayoutText();
 	UpdateText();
 	sweepKey = nil;
@@ -1105,6 +1133,7 @@ local TAB_SETTINGS = {
 	  "sweepOutline", "sweepOutlineWidth", "sor", "sog", "sob" },
 	{ "textHealth", "textShield", "textCooldown", "textPos", "textFont", "textSize", "textByHealth",
 	  "tr", "tg", "tb" },
+	{},   -- the Save tab has nothing to reset
 };
 
 -- Resets the settings of tab <id> (the spells seen so far are kept).
@@ -1121,11 +1150,12 @@ local function ResetTab(id)
 	ApplySettings();
 end
 
--- Resets every setting but keeps the spells seen so far.
+-- Resets every setting but keeps the spells seen so far, the saved cursors and the options
+-- window's size.
 local function ResetSettings()
-	local seen = db.seen;
+	local seen, saves, windowScale = db.seen, db.saves, db.windowScale;
 	FillDefaults(true);
-	db.seen = seen;
+	db.seen, db.saves, db.windowScale = seen, saves, windowScale;
 	ApplySettings();
 end
 
@@ -1213,6 +1243,41 @@ function UI.SetControlState(c, active, clickable)
 			b:Disable();
 		end
 	end
+end
+
+-- Gives the options window <f> its size from the Window size slider, keeping its top left
+-- corner where it is on screen.
+function UI.ScaleWindow(f)
+	local old, new = f:GetScale(), db.windowScale / 100;
+	if ( math.abs(old - new) < 0.001 ) then return; end
+	local left, top = f:GetLeft(), f:GetTop();
+	f:SetScale(new);
+	if ( left and top ) then
+		f:ClearAllPoints();
+		f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left * old / new, top * old / new);
+	end
+end
+
+-- Makes button <b> run <action> only on a second click within 3 seconds, so a slip can't
+-- undo anything: the first click changes its text to "Sure?".
+function UI.ConfirmClicks(b, tooltip, action)
+	b.normalText = b:GetText();
+	b:SetScript("OnClick", function()
+		if ( this.armed and GetTime() - this.armed < 3 ) then
+			this.armed = nil;
+			this:SetText(this.normalText);
+			action();
+		else
+			this.armed = GetTime();
+			this:SetText("Sure?");
+		end
+	end);
+	b:SetScript("OnEnter", function() UI.ShowTooltip(this, tooltip); end);
+	b:SetScript("OnLeave", function()
+		GameTooltip:Hide();
+		this.armed = nil;
+		this:SetText(this.normalText);
+	end);
 end
 
 -- A frame holding a row of widgets, so they can be greyed out together.
@@ -1575,8 +1640,8 @@ function UI.OpacityLabel(v) return "Opacity: " .. v .. "%"; end
 -- The tab pages: each builds its controls into <c>, the table Refresh updates them from.
 -- A column is 240 wide; each tab's left edge (and the second column's on the two-column
 -- tabs) centers its columns in the window.
-local TAB_LEFT = { 150, 35, 150, 150, 35, 150 };
-local RIGHT_COLUMN = 315;
+local TAB_LEFT = { 180, 40, 180, 180, 40, 180, 40 };
+local RIGHT_COLUMN = 320;
 
 local function BuildRingTab(page, c)
 	local L = TAB_LEFT[1];
@@ -1667,7 +1732,7 @@ local function BuildCenterTab(page, c)
 			if ( v ) then db.centerDot = false; end
 			ApplySettings();
 		end);
-	c.centerSize = UI.CreateSlider(page, "CursorReticleOptionsCenterSize", L + 6, -132, 2, 32, "2", "32",
+	c.centerSize = UI.CreateSlider(page, "CursorReticleOptionsCenterSize", L + 6, -132, 2, 50, "2", "50",
 		UI.SizeLabel, UI.Setter("centerSize"));
 	c.centerThickness = UI.CreateSlider(page, "CursorReticleOptionsCenterThickness", L + 6, -174, 1, 8, "1", "8",
 		function(v) return "Crosshair thickness: " .. v; end, UI.Setter("centerThickness"));
@@ -1802,7 +1867,476 @@ local function BuildTextTab(page, c)
 	table.insert(c.colorRows, c.textColor);
 end
 
-local TAB_BUILDERS = { BuildRingTab, BuildHealthTab, BuildCenterTab, BuildLowHealthTab, BuildSweepTab, BuildTextTab };
+-- Saved cursors. A save holds every tab's settings except the spells the sweep tracks,
+-- which belong to each class.
+function UI.SavedKeys()
+	local keys = {};
+	for t = 1, table.getn(TAB_SETTINGS) do
+		for i = 1, table.getn(TAB_SETTINGS[t]) do
+			if ( TAB_SETTINGS[t][i] ~= "track" ) then
+				table.insert(keys, TAB_SETTINGS[t][i]);
+			end
+		end
+	end
+	return keys;
+end
+
+-- The index in db.saves of the save called <name>, ignoring case.
+function UI.FindSave(name)
+	for i = 1, table.getn(db.saves) do
+		if ( string.lower(db.saves[i].name) == string.lower(name) ) then
+			return i;
+		end
+	end
+end
+
+-- A save name without what would break a share code (";", "=") or WoW's text escapes ("|"),
+-- and without spaces at the ends.
+function UI.CleanName(name)
+	name = string.gsub(name or "", "[;=|]", "");
+	name = string.gsub(name, "^%s*(.-)%s*$", "%1");
+	return name;
+end
+
+-- Saves the current cursor as <name>, or updates the save of that name. Returns a message.
+function UI.SaveCursor(name)
+	name = UI.CleanName(name);
+	if ( name == "" ) then
+		return "Type a name first.";
+	end
+	local settings, keys = {}, UI.SavedKeys();
+	for i = 1, table.getn(keys) do
+		settings[keys[i]] = db[keys[i]];
+	end
+	local i = UI.FindSave(name);
+	if ( i ) then
+		db.saves[i].settings = settings;
+		return "Updated \"" .. db.saves[i].name .. "\".";
+	end
+	if ( table.getn(db.saves) >= MAX_SAVES ) then
+		return MAX_SAVES .. " saved cursors at most: delete one first.";
+	end
+	table.insert(db.saves, { name = name, settings = settings });
+	return "Saved \"" .. name .. "\".";
+end
+
+-- Loads the save called <name>: its settings replace the current ones. A setting the save
+-- doesn't have (added in a later version) takes its default. Returns a message.
+function UI.LoadCursor(name)
+	local i = UI.FindSave(name);
+	if ( not i ) then return; end
+	local settings, keys = db.saves[i].settings, UI.SavedKeys();
+	for k = 1, table.getn(keys) do
+		local v = UI.CheckSetting(keys[k], settings[keys[k]]);
+		if ( v == nil ) then v = DEFAULTS[keys[k]]; end
+		db[keys[k]] = v;
+	end
+	FillDefaults(false);
+	ApplySettings();
+	return "Loaded \"" .. db.saves[i].name .. "\".";
+end
+
+-- Share codes: "CR1;n=<name>;<key>=<value>;..." with only the settings that differ from the
+-- defaults (the rest take their defaults on import). Booleans are 1 / 0, numbers have at most
+-- 3 decimals. CR1 is the code's version, so later versions can still read it.
+local SHARE_PREFIX = "CR1";
+
+-- What a shared setting may be, as codes come from other players: a number setting stays
+-- within its slider's range (keep these in step with the sliders), a color part within 0..1,
+-- and a choice is one the menu has.
+UI.RANGES = {
+	size = { 16, 200 }, thickness = { 1, 5 }, alpha = { 10, 100 }, ringOutlineWidth = { 1, 3 },
+	healthSize = { 16, 200 }, healthThickness = { 1, 5 }, healthAlpha = { 10, 100 },
+	healthOutlineWidth = { 1, 3 },
+	centerSize = { 2, 50 }, centerThickness = { 1, 8 }, centerAlpha = { 10, 100 },
+	centerOutlineWidth = { 1, 3 },
+	lowAt = { 5, 75 },
+	sweepRingSize = { 16, 200 }, sweepRingThickness = { 1, 5 }, sweepAlpha = { 10, 100 },
+	sweepFillAlpha = { 10, 100 }, sweepOutlineWidth = { 1, 3 },
+	textSize = { 8, 24 },
+};
+UI.CHOICES = {
+	sweepRingPos = RING_POSITION_NAMES, sweepRingType = RING_TYPE_NAMES,
+	textPos = TEXT_POSITION_NAMES, textFont = TEXT_FONT_NAMES,
+};
+
+-- Setting <k> as <v> if it may be that (see UI.RANGES), brought into range if it's a number
+-- out of range, or nil (to take the default) if it can't be.
+function UI.CheckSetting(k, v)
+	local default = DEFAULTS[k];
+	if ( type(default) == "number" ) then
+		if ( type(v) ~= "number" or v ~= v ) then return nil; end   -- v ~= v: not a number
+		local range = UI.RANGES[k];
+		if ( not range ) then
+			return math.max(0, math.min(1, v));   -- a color part
+		end
+		return math.max(range[1], math.min(range[2], math.floor(v + 0.5)));
+	elseif ( UI.CHOICES[k] ) then
+		if ( type(v) == "string" and UI.CHOICES[k][v] ) then return v; end
+		return nil;
+	elseif ( type(v) ~= type(default) ) then
+		return nil;
+	end
+	return v;
+end
+
+function UI.ShareValue(v)
+	if ( type(v) == "boolean" ) then
+		return v and "1" or "0";
+	elseif ( type(v) == "number" ) then
+		local s = string.format("%.3f", v);
+		s = string.gsub(s, "0+$", "");
+		s = string.gsub(s, "%.$", "");
+		return s;
+	end
+	return tostring(v);
+end
+
+-- The share code of the save called <name>, and a message.
+function UI.ExportCursor(name)
+	local i = UI.FindSave(name);
+	if ( not i ) then return; end
+	local save, keys = db.saves[i], UI.SavedKeys();
+	local parts = { SHARE_PREFIX, "n=" .. save.name };
+	for k = 1, table.getn(keys) do
+		local v = save.settings[keys[k]];
+		if ( v ~= nil and v ~= DEFAULTS[keys[k]] ) then
+			table.insert(parts, keys[k] .. "=" .. UI.ShareValue(v));
+		end
+	end
+	return table.concat(parts, ";"), "The code for \"" .. save.name .. "\" is in the box: press Ctrl+C to copy it.";
+end
+
+-- Adds the cursor in share <code> to the saves. Returns a message.
+function UI.ImportCursor(code)
+	-- Line breaks and tabs a paste may bring along go, and spaces at the ends; spaces inside
+	-- stay, as a name can have them.
+	code = string.gsub(code or "", "[\r\n\t]", "");
+	code = string.gsub(code, "^%s*(.-)%s*$", "%1");
+	if ( string.sub(code, 1, string.len(SHARE_PREFIX) + 1) ~= SHARE_PREFIX .. ";" ) then
+		return "That isn't a Cursor Reticle code.";
+	end
+	if ( table.getn(db.saves) >= MAX_SAVES ) then
+		return MAX_SAVES .. " saved cursors at most: delete one first.";
+	end
+	local allowed = {};
+	local keys = UI.SavedKeys();
+	for k = 1, table.getn(keys) do
+		allowed[keys[k]] = true;
+	end
+	-- A setting with a value it can't have is fixed (see UI.CheckSetting) and listed in
+	-- <fixed>; a part that isn't "key=value" is skipped and counted. Either means the code
+	-- was damaged, say by copying only part of it. Settings this version doesn't know (from
+	-- a later version) are skipped quietly.
+	local name, settings, fixed, unreadable = "Imported", {}, {}, 0;
+	code = string.sub(code, string.len(SHARE_PREFIX) + 2);
+	string.gsub(code, "([^;]+)", function(pair)
+		local _, _, k, v = string.find(pair, "^%s*(%w+)%s*=%s*(.-)%s*$");
+		if ( k == "n" ) then
+			name = v;
+		elseif ( not k ) then
+			unreadable = unreadable + 1;
+		elseif ( allowed[k] ) then
+			local default = DEFAULTS[k];
+			if ( type(default) == "boolean" ) then
+				if ( v == "1" ) then v = true; elseif ( v == "0" ) then v = false; else v = nil; end
+			elseif ( type(default) == "number" ) then
+				v = tonumber(v);
+			end
+			settings[k] = UI.CheckSetting(k, v);
+			if ( settings[k] == nil or settings[k] ~= v ) then
+				table.insert(fixed, k);
+			end
+		end
+	end);
+	-- Settings left out of the code take their defaults.
+	for k = 1, table.getn(keys) do
+		if ( settings[keys[k]] == nil ) then
+			settings[keys[k]] = DEFAULTS[keys[k]];
+		end
+	end
+	name = UI.CleanName(name);
+	if ( name == "" ) then name = "Imported"; end
+	local base, n = name, 2;
+	while ( UI.FindSave(name) ) do
+		name = base .. " " .. n;
+		n = n + 1;
+	end
+	table.insert(db.saves, { name = name, settings = settings });
+	local n = table.getn(fixed);
+	if ( n == 0 and unreadable == 0 ) then
+		return "Imported \"" .. name .. "\": load it from the list below.";
+	end
+	-- A damaged code is still imported, with a warning in orange.
+	local problem;
+	if ( n > 0 ) then
+		problem = n .. (n == 1 and " setting was" or " settings were") .. " wrong and fixed";
+	else
+		problem = "parts of it couldn't be read";
+	end
+	return "|cffff9933Imported \"" .. name .. "\", but the code looks damaged: " .. problem
+		.. ". Check it before you use it.|r";
+end
+
+-- Renames the save called <name> to <newName>. Returns a message.
+function UI.RenameCursor(name, newName)
+	local i = UI.FindSave(name);
+	if ( not i ) then return; end
+	newName = UI.CleanName(newName);
+	if ( newName == "" ) then
+		return "Type a name first.";
+	end
+	local other = UI.FindSave(newName);
+	if ( other and other ~= i ) then
+		return "You already have a cursor called \"" .. db.saves[other].name .. "\".";
+	end
+	local old = db.saves[i].name;
+	db.saves[i].name = newName;
+	return "Renamed \"" .. old .. "\" to \"" .. newName .. "\".";
+end
+
+function UI.DeleteCursor(name)
+	local i = UI.FindSave(name);
+	if ( not i ) then return; end
+	local removed = table.remove(db.saves, i);
+	return "Deleted \"" .. removed.name .. "\".";
+end
+
+-- Draws saved cursor <settings> as a still picture in a row's preview: health at 70% with
+-- a 20% shield, the sweep 60% of the way round, no low health warning. The drawing code
+-- reads db, so the save (over the defaults) stands in for db while it draws.
+function UI.DrawPreview(row, settings)
+	local real, realLow = db, lowHealth;
+	local merged = {};
+	for k, v in pairs(DEFAULTS) do merged[k] = v; end
+	for k, v in pairs(settings) do
+		local checked = UI.CheckSetting(k, v);
+		if ( checked ~= nil ) then merged[k] = checked; end
+	end
+	db, lowHealth = merged, false;
+	local ok = pcall(UI.DrawPreviewNow, row);
+	db, lowHealth = real, realLow;
+	-- A save the drawing code can't handle shows no preview rather than a broken one.
+	ShowIf(row.scaler, ok);
+end
+
+function UI.DrawPreviewNow(row)
+	local R = row.preview;
+	R.sample = { 0.7, db.healthShield and 0.2 or 0 };
+	LayoutRings(R);
+	LayoutCenter(R);
+	LayoutSweepFill(R);
+	LayoutHealthRing(R);
+	SetFillProgress(R.sweepFill, db.sweepEnabled and 0.6 or nil);
+	-- Scaled down to fit the box, never up.
+	local fit = (row.cell:GetWidth() / 2 - 1) / math.max(1, OuterRadius());
+	row.scaler:SetScale(math.min(1, fit));
+end
+
+-- Shows the saved cursors in the Save tab's rows, by name, each with its preview.
+function UI.RefreshSaves(c)
+	local saves = {};
+	for i = 1, table.getn(db.saves) do
+		table.insert(saves, db.saves[i]);
+	end
+	table.sort(saves, function(a, b) return string.lower(a.name) < string.lower(b.name); end);
+	for i = 1, MAX_SAVES do
+		local row, save = c.saveRows[i], saves[i];
+		row.saveName = save and save.name;
+		row.label:SetText(save and save.name or "");
+		ShowIf(row, save);
+		row.delete.armed = nil;
+		row.delete:SetText("Delete");
+		UI.EndRename(row);
+		-- Saving under the same name makes a new settings table, so this redraws after it.
+		if ( save and row.drawn ~= save.settings ) then
+			row.drawn = save.settings;
+			if ( not row.preview ) then
+				row.preview = CreateReticle(row.scaler);
+			end
+			UI.DrawPreview(row, save.settings);
+		end
+	end
+	ShowIf(c.saveEmpty, table.getn(saves) == 0);
+end
+
+-- What the Save tab's buttons do: run <action>(name), show its message, update the list.
+function UI.SaveAction(c, action, name)
+	local message = action(name);
+	if ( message ) then
+		c.saveStatus:SetText(message);
+	end
+	UI.RefreshSaves(c);
+end
+
+-- Shows saved cursor <row>'s name in a box to edit, and its Rename button as OK.
+function UI.StartRename(row)
+	row.label:Hide();
+	row.renameBox:SetText(row.saveName or "");
+	row.renameBox:Show();
+	row.renameBox:SetFocus();
+	row.renameBox:HighlightText();
+	row.rename:SetText("OK");
+end
+
+-- Puts saved cursor <row> back to showing its name.
+function UI.EndRename(row)
+	row.renameBox:ClearFocus();
+	row.renameBox:Hide();
+	row.label:Show();
+	row.rename:SetText("Rename");
+end
+
+-- A button for a saved cursor's row.
+function UI.RowButton(row, text, width, tooltip)
+	local b = CreateFrame("Button", nil, row, "UIPanelButtonTemplate");
+	b:SetWidth(width);
+	b:SetHeight(20);
+	b:SetText(text);
+	if ( tooltip ) then
+		UI.AddTooltip(b, tooltip);
+	end
+	return b;
+end
+
+-- One saved cursor's row: its preview in a dark box, its name, and its buttons. <code> is
+-- the Share code box, which Export fills.
+function UI.CreateSaveRow(page, c, i, code)
+	local L = TAB_LEFT[7];
+	local row = UI.CreateRow(page, L, -196 - (i - 1) * 37, 520, 35);
+	row.cell = CreateFrame("Frame", nil, row);
+	row.cell:SetWidth(35);
+	row.cell:SetHeight(35);
+	row.cell:SetPoint("LEFT", row, "LEFT", 0, 0);
+	local shade = row.cell:CreateTexture(nil, "BACKGROUND");
+	shade:SetTexture(0, 0, 0, 0.4);
+	shade:SetAllPoints(row.cell);
+	-- The preview is scaled to fit inside this frame, centered so the scale doesn't move it.
+	row.scaler = CreateFrame("Frame", nil, row.cell);
+	row.scaler:SetWidth(1);
+	row.scaler:SetHeight(1);
+	row.scaler:SetPoint("CENTER", row.cell, "CENTER", 0, 0);
+
+	row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight");
+	row.label:SetPoint("LEFT", row, "LEFT", 46, 0);
+	row.label:SetWidth(200);
+	row.label:SetJustifyH("LEFT");
+	-- Rename swaps the name for this box until Enter (or OK) or Escape.
+	row.renameBox = CreateFrame("EditBox", "CursorReticleOptionsRename" .. i, row, "InputBoxTemplate");
+	row.renameBox:SetWidth(190);
+	row.renameBox:SetHeight(20);
+	row.renameBox:SetPoint("LEFT", row, "LEFT", 50, 0);
+	row.renameBox:SetAutoFocus(false);
+	row.renameBox:SetMaxLetters(24);
+	row.renameBox:Hide();
+	local function Rename()
+		local newName = row.renameBox:GetText();
+		UI.SaveAction(c, function(name) return UI.RenameCursor(name, newName); end, row.saveName);
+	end
+	row.renameBox:SetScript("OnEnterPressed", Rename);
+	row.renameBox:SetScript("OnEscapePressed", function() UI.EndRename(row); end);
+
+	-- Delete takes a second click, so a slip can't lose a save.
+	row.delete = UI.RowButton(row, "Delete", 60);
+	row.delete:SetPoint("RIGHT", row, "RIGHT", -4, 0);
+	UI.ConfirmClicks(row.delete, "Click twice to delete this cursor.", function()
+		UI.SaveAction(c, UI.DeleteCursor, row.saveName);
+	end);
+	row.export = UI.RowButton(row, "Export", 60,
+		"Puts this cursor's code in the Code box, ready to copy and share.");
+	row.export:SetPoint("RIGHT", row.delete, "LEFT", -4, 0);
+	row.export:SetScript("OnClick", function()
+		local text, message = UI.ExportCursor(row.saveName);
+		if ( not text ) then return; end
+		code:SetText(text);
+		code:SetFocus();
+		code:HighlightText();
+		c.saveStatus:SetText(message);
+	end);
+	row.rename = UI.RowButton(row, "Rename", 66, "Gives this cursor a new name.");
+	row.rename:SetPoint("RIGHT", row.export, "LEFT", -4, 0);
+	row.rename:SetScript("OnClick", function()
+		if ( row.renameBox:IsShown() ) then
+			Rename();
+		else
+			UI.StartRename(row);
+		end
+	end);
+	row.load = UI.RowButton(row, "Load", 56, "Loads this cursor, replacing your current settings.");
+	row.load:SetPoint("RIGHT", row.rename, "LEFT", -4, 0);
+	row.load:SetScript("OnClick", function() UI.SaveAction(c, UI.LoadCursor, row.saveName); end);
+	row.buttons = { row.load, row.rename, row.export, row.delete };
+	return row;
+end
+
+-- A text box for the Save tab.
+function UI.CreateBox(page, name, x, y, width, maxLetters)
+	local box = CreateFrame("EditBox", name, page, "InputBoxTemplate");
+	box:SetWidth(width);
+	box:SetHeight(20);
+	box:SetPoint("TOPLEFT", page, "TOPLEFT", x, y);
+	box:SetAutoFocus(false);
+	box:SetMaxLetters(maxLetters);
+	box:SetScript("OnEscapePressed", function() this:ClearFocus(); end);
+	return box;
+end
+
+local function BuildSaveTab(page, c)
+	local L, R = TAB_LEFT[7], RIGHT_COLUMN;
+	UI.CreateHeader(page, "Save your cursor", L, -66);
+	UI.CreateLabel(page, "Name:", L + 6, -91);
+	local box = UI.CreateBox(page, "CursorReticleOptionsSaveName", L + 56, -87, 130, 24);
+	local saveButton = UI.RowButton(page, "Save", 60, "Saves your current cursor under this "
+		.. "name. Saving under a name you already have updates that save.");
+	saveButton:SetHeight(22);
+	saveButton:SetPoint("LEFT", box, "RIGHT", 10, 0);
+	local function Save()
+		UI.SaveAction(c, UI.SaveCursor, box:GetText());
+		box:ClearFocus();
+	end
+	saveButton:SetScript("OnClick", Save);
+	box:SetScript("OnEnterPressed", Save);
+	c.saveButton = saveButton;
+	local note = UI.CreateNote(page, L + 6, -118);
+	note:SetText("Saves every setting except the spells the cooldown sweep tracks. Up to "
+		.. MAX_SAVES .. " cursors.");
+	note:SetWidth(250);
+
+	-- Sharing: a saved cursor's Export button puts its code here, ready to copy; a code
+	-- pasted here is added to the saves with Import.
+	UI.CreateHeader(page, "Share", R, -66);
+	UI.CreateLabel(page, "Code:", R + 6, -91);
+	local code = UI.CreateBox(page, "CursorReticleOptionsShareCode", R + 56, -87, 130, 4000);
+	local import = UI.RowButton(page, "Import", 60, "Paste a Cursor Reticle code in the box "
+		.. "(Ctrl+V), then click Import to add it to your saved cursors.");
+	import:SetHeight(22);
+	import:SetPoint("LEFT", code, "RIGHT", 10, 0);
+	import:SetScript("OnClick", function()
+		UI.SaveAction(c, UI.ImportCursor, code:GetText());
+		code:ClearFocus();
+	end);
+	c.importButton = import;
+	local shareNote = UI.CreateNote(page, R + 6, -118);
+	shareNote:SetText("Export a saved cursor to get a code to share, or paste someone's code "
+		.. "and click Import.");
+	shareNote:SetWidth(250);
+
+	-- The list, with what the last button did beside its header.
+	UI.CreateHeader(page, "Saved cursors", L, -170);
+	c.saveStatus = UI.CreateNote(page, L + 110, -172);
+	c.saveStatus:SetWidth(410);
+	c.saveEmpty = UI.CreateNote(page, L + 6, -198);
+	c.saveEmpty:SetText("No saved cursors yet.");
+	c.saveRows = {};
+	for i = 1, MAX_SAVES do
+		c.saveRows[i] = UI.CreateSaveRow(page, c, i, code);
+	end
+end
+
+local TAB_BUILDERS = {
+	BuildRingTab, BuildHealthTab, BuildCenterTab, BuildLowHealthTab, BuildSweepTab, BuildTextTab,
+	BuildSaveTab,
+};
 
 -- The notes on the Ring, Health and Cooldown sweep tabs about which ring is shown where.
 local function RingNotes()
@@ -1829,6 +2363,7 @@ end
 -- Copies the settings into the options window's controls <c>.
 local function RefreshValues(c)
 	c.enable:SetChecked(db.enabled);
+	c.windowScale:SetValue(db.windowScale);
 
 	c.showRing:SetChecked(db.showRing);
 	c.size:SetValue(db.size);
@@ -1998,6 +2533,12 @@ local function RefreshStates(c)
 	State("textByHealth", db.textHealth);
 	State("textColor", anyText);
 	State("textPresets", anyText);
+
+	State("saveButton", true);
+	State("importButton", true);
+	for i = 1, table.getn(c.saveRows) do
+		UI.SetControlState(c.saveRows[i], true, on);
+	end
 end
 
 -- Brings the options window up to date: in two functions, as a Lua 5.0 function can use
@@ -2006,12 +2547,15 @@ local function RefreshOptions(c)
 	refreshing = true;
 	RefreshValues(c);
 	RefreshStates(c);
+	UI.RefreshSaves(c);
 	refreshing = false;
 end
 
 local function CreateOptions()
 	local f = CreateFrame("Frame", "CursorReticleOptions", UIParent);
-	f:SetPoint("TOP", UIParent, "TOP", 0, -120);
+	f:SetPoint("TOP", UIParent, "TOP", 0, -100);
+	f:SetWidth(WINDOW_SIZE[1]);
+	f:SetHeight(WINDOW_SIZE[2]);
 	f:SetFrameStrata("HIGH");
 	f:SetBackdrop({
 		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -2049,12 +2593,30 @@ local function CreateOptions()
 	local enable = UI.CreateCheck(f, "CursorReticleOptionsEnable", "Enable addon", 24, -30,
 		"Turns everything Cursor Reticle draws on or off.", UI.Setter("enabled"));
 
-	-- The tabs' pages, in one frame so they can be greyed out at once while the addon is off.
-	local main = CreateFrame("Frame", nil, f);
-	main:SetAllPoints(f);
+	-- Resets everything, with a second click to be sure.
+	local resetAll = CreateFrame("Button", nil, f, "UIPanelButtonTemplate");
+	resetAll:SetWidth(90);
+	resetAll:SetHeight(22);
+	resetAll:SetPoint("LEFT", getglobal("CursorReticleOptionsEnableText"), "RIGHT", 24, 0);
+	resetAll:SetText("Reset all");
+	UI.ConfirmClicks(resetAll, "Resets every setting on every tab. Your saved cursors, the "
+		.. "window size and the spells seen so far are kept. Click twice.", ResetSettings);
 
-	-- Standard bottom tabs, one page each. The window takes each tab's size, keeping its top
-	-- edge in place, and remembers the last tab while the game runs.
+	-- A line between the top row and the tabs' content.
+	local divider = f:CreateTexture(nil, "ARTWORK");
+	divider:SetTexture(1, 1, 1, 0.2);
+	divider:SetHeight(1);
+	divider:SetPoint("TOPLEFT", f, "TOPLEFT", 20, -63);
+	divider:SetPoint("TOPRIGHT", f, "TOPRIGHT", -20, -63);
+
+	-- The tabs' pages, in one frame so they can be greyed out at once while the addon is off,
+	-- a little below the top row to leave room for the line.
+	local main = CreateFrame("Frame", nil, f);
+	main:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -12);
+	main:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0);
+
+	-- Standard bottom tabs, one page each. The window remembers the last tab while the game
+	-- runs.
 	local pages = {};
 	local SelectTab;
 	for i = 1, table.getn(TAB_NAMES) do
@@ -2078,18 +2640,15 @@ local function CreateOptions()
 	end
 	PanelTemplates_SetNumTabs(f, table.getn(TAB_NAMES));
 	SelectTab = function(id)
-		local left, top = f:GetLeft(), f:GetTop();
-		if ( left and top ) then
-			f:ClearAllPoints();
-			f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top);
-		end
-		f:SetWidth(TAB_SIZES[id][1]);
-		f:SetHeight(TAB_SIZES[id][2]);
-		-- Line the addon's checkbox up with the tab's content.
+		-- Line the addon's checkbox (and Reset all beside it) up with the tab's content.
 		enable:ClearAllPoints();
 		enable:SetPoint("TOPLEFT", f, "TOPLEFT", TAB_LEFT[id] - 4, -30);
 		f.tabId = id;
 		UI.CloseMenu();
+		-- The Save tab has nothing to reset.
+		if ( f.resetButton ) then
+			ShowIf(f.resetButton, table.getn(TAB_SETTINGS[id]) > 0);
+		end
 		PanelTemplates_SetTab(f, id);
 		for i = 1, table.getn(pages) do
 			ShowIf(pages[i], i == id);
@@ -2097,8 +2656,8 @@ local function CreateOptions()
 	end;
 	SelectTab(1);
 
-	-- The controls Refresh updates, in one table: a 1.12 function can use at most 60 locals
-	-- from around it, so Refresh reads them all from here.
+	-- The controls the refresh updates, in one table: a Lua 5.0 function can use at most 32
+	-- locals from around it, so RefreshValues and RefreshStates read them all from here.
 	local c = { main = main, enable = enable, colorRows = {} };
 	for i = 1, table.getn(pages) do
 		TAB_BUILDERS[i](pages[i], c);
@@ -2111,9 +2670,23 @@ local function CreateOptions()
 	reset:SetText("Reset to defaults");
 	reset:SetScript("OnClick", function() ResetTab(f.tabId); end);
 	UI.AddTooltip(reset, "Resets the settings on this tab. The spells seen so far are kept.");
+	f.resetButton = reset;
+
+	-- The window's own size, top right. The window only takes the new size once the slider
+	-- is let go: scaling it mid-drag would move the slider away from the mouse.
+	c.windowScale = UI.CreateSlider(f, "CursorReticleOptionsWindowScale", 400, -44, 50, 125, "", "",
+		function(v) return "Window size: " .. v .. "%"; end, function(v) db.windowScale = v; end);
+	c.windowScale:SetWidth(150);
+	c.windowScale:SetValueStep(5);
+	c.windowScale:SetScript("OnMouseUp", function() UI.ScaleWindow(f); end);
+	UI.AddTooltip(c.windowScale, "The size of this window. Your cursor isn't affected.");
+	UI.ScaleWindow(f);
 
 	f.Refresh = function() RefreshOptions(c); end;
-	f:SetScript("OnShow", f.Refresh);
+	f:SetScript("OnShow", function()
+		UI.ScaleWindow(f);
+		f.Refresh();
+	end);
 	f:SetScript("OnHide", function()
 		StopPreviews();
 		UI.CloseMenu();

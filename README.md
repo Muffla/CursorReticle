@@ -14,6 +14,11 @@ cooldown, drawn around the cursor so you never lose it in a fight.
     <td align="center"><img src="screenshots/cooldown_sweep_with_main_circle.gif" alt="The cooldown sweep with the main circle inside it"><br><sub>Sweep with the main circle</sub></td>
     <td align="center"><img src="screenshots/cooldown_sweep_with_health_circle.gif" alt="The cooldown sweep with the health circle inside it"><br><sub>Sweep with the health circle</sub></td>
   </tr>
+  <tr>
+    <td align="center"><img src="screenshots/crosshair.png" alt="A crosshair at the cursor"><br><sub>Crosshair</sub></td>
+    <td align="center"><img src="screenshots/low_opacity_dot.png" alt="A large see-through dot at the cursor"><br><sub>See-through dot</sub></td>
+    <td></td>
+  </tr>
 </table>
 
 ## Features
@@ -29,9 +34,11 @@ cooldown, drawn around the cursor so you never lose it in a fight.
   choice of font.
 - **Previews** for the health circle, cooldown sweep and low health warning, so you can
   set them up outside a run.
+- **Saved cursors**: save your setups under a name, each shown with a small preview, switch
+  between them, and share them with other players as a short code.
 
-Every part can be turned on or off, and each tab of the options window can be reset to its
-defaults on its own.
+Every part can be turned on or off. Each tab of the options window can be reset to its
+defaults on its own, or everything at once with **Reset all**.
 
 ## Installation
 
@@ -60,16 +67,20 @@ Click a screenshot to see it full size.
 
 <table>
   <tr>
-    <td align="center"><a href="screenshots/menu_circle.png"><img src="screenshots/menu_circle.png" width="400" alt="The Circle tab"></a><br><sub>Circle</sub></td>
-    <td align="center"><a href="screenshots/menu_health_circle.png"><img src="screenshots/menu_health_circle.png" width="400" alt="The Health circle tab"></a><br><sub>Health circle</sub></td>
+    <td align="center"><a href="screenshots/01_settings_circle.png"><img src="screenshots/01_settings_circle.png" width="400" alt="The Circle tab"></a><br><sub>Circle</sub></td>
+    <td align="center"><a href="screenshots/02_settings_health-circle.png"><img src="screenshots/02_settings_health-circle.png" width="400" alt="The Health circle tab"></a><br><sub>Health circle</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="screenshots/menu_center.png"><img src="screenshots/menu_center.png" width="400" alt="The Center tab"></a><br><sub>Center</sub></td>
-    <td align="center"><a href="screenshots/menu_low_health.png"><img src="screenshots/menu_low_health.png" width="400" alt="The Low health tab"></a><br><sub>Low health</sub></td>
+    <td align="center"><a href="screenshots/03_settings_center.png"><img src="screenshots/03_settings_center.png" width="400" alt="The Center tab"></a><br><sub>Center</sub></td>
+    <td align="center"><a href="screenshots/04_settings_low-health.png"><img src="screenshots/04_settings_low-health.png" width="400" alt="The Low health tab"></a><br><sub>Low health</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="screenshots/menu_cooldown_sweep.png"><img src="screenshots/menu_cooldown_sweep.png" width="400" alt="The Cooldown sweep tab"></a><br><sub>Cooldown sweep</sub></td>
-    <td align="center"><a href="screenshots/menu_text.png"><img src="screenshots/menu_text.png" width="400" alt="The Text tab"></a><br><sub>Text</sub></td>
+    <td align="center"><a href="screenshots/05_settings_cooldown-sweep.png"><img src="screenshots/05_settings_cooldown-sweep.png" width="400" alt="The Cooldown sweep tab"></a><br><sub>Cooldown sweep</sub></td>
+    <td align="center"><a href="screenshots/06_settings_text.png"><img src="screenshots/06_settings_text.png" width="400" alt="The Text tab"></a><br><sub>Text</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="screenshots/07_settings_save.png"><img src="screenshots/07_settings_save.png" width="400" alt="The Save tab with saved cursors and their previews"></a><br><sub>Save</sub></td>
+    <td></td>
   </tr>
 </table>
 

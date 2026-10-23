@@ -1,6 +1,6 @@
 ## Interface: 11200
 ## Title: Cursor Reticle
 ## Notes: Circles, a dot or crosshair, your health and a spell's cooldown around the cursor. Type /cr for the options.
-## Version: 1.1.0
+## Version: 1.2.0
 ## SavedVariables: CursorReticleDB, CursorRingDB
 CursorReticle.lua
